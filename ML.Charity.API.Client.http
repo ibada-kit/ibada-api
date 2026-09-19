@@ -1,0 +1,6 @@
+@ML.Charity.API.Client_HostAddress = http://localhost:5158
+
+GET {{ML.Charity.API.Client_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
