@@ -50,6 +50,12 @@ namespace ML.Charity.API.Client.Controllers
                 Token = token,
                 Role = user.Role,
                 FullName = user.FullName,
+                UserId = user.UserId,
+                PhoneNumber = user.PhoneNumber,
+                Panchayath = user.Panchayath,
+                WardNumber = user.WardNumber,
+                TargetKits = user.TargetKits,
+                TargetAmount = user.TargetAmount,
                 NeedsPasswordChange = false, // You can add logic here if you track password changes
                 ExpiresAt = DateTime.UtcNow.AddMinutes(duration) // Match JWT settings
             });

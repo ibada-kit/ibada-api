@@ -26,8 +26,12 @@ public class LeaderboardsController : ControllerBase
     public async Task<IActionResult> GetLeaderboard()
     {
         // 1. Fetch all active donations and users
-        var allDonations = await _donationRepository.QueryEntitiesAsync(null);
-        var allUsers = await _userRepository.QueryEntitiesAsync(null);
+        var allDonations = (await _donationRepository.QueryEntitiesAsync(null)) 
+            ?? (await _donationRepository.QueryAsync(d => true)) 
+            ?? new List<DonationEntity>();
+        var allUsers = (await _userRepository.QueryEntitiesAsync(null)) 
+            ?? (await _userRepository.QueryAsync(u => true)) 
+            ?? new List<UserEntity>();
         var userMap = allUsers.Where(u => !string.IsNullOrEmpty(u.UserId)).ToDictionary(u => u.UserId, u => u);
 
         // 2. Aggregate Top Volunteers / Fundraisers (real counts, no dummy estimates)

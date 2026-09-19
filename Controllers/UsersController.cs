@@ -370,9 +370,10 @@ namespace ML.Charity.API.Client.Controllers
 
             if (user == null) return NotFound("User not found.");
 
-            await _userRepository.DeleteAsync(user.PartitionKey, user.RowKey);
+            user.IsActive = false;
+            await _userRepository.UpdateAsync(user);
 
-            return Ok(new { Message = $"User {user.FullName} deleted successfully." });
+            return Ok(new { Message = $"User {user.FullName} deactivated successfully." });
         }
 
         // Helper method to keep your endpoints clean

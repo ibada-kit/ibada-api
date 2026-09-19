@@ -1,4 +1,4 @@
-﻿// --- AuthDTOs.cs ---
+// --- AuthDTOs.cs ---
 using System.ComponentModel.DataAnnotations;
 
 namespace ML.Charity.API.Client.DTOs
@@ -27,6 +27,12 @@ namespace ML.Charity.API.Client.DTOs
         public string Token { get; set; } = string.Empty;
         public string Role { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
+        public string UserId { get; set; } = string.Empty;
+        public string PhoneNumber { get; set; } = string.Empty;
+        public string Panchayath { get; set; } = string.Empty;
+        public int WardNumber { get; set; }
+        public int TargetKits { get; set; }
+        public double TargetAmount { get; set; }
         public bool NeedsPasswordChange { get; set; } // Flag to force password change
         public DateTime ExpiresAt { get; set; }
     }

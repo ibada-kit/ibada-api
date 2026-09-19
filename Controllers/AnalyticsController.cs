@@ -40,8 +40,13 @@ namespace ML.Charity.API.Client.Controllers
 
             if (string.IsNullOrEmpty(userId)) return Unauthorized("User claim not found in token.");
 
-            var users = await _userRepository.QueryAsync(u => u.UserId == userId || u.RowKey == userId);
+            var users = await _userRepository.QueryAsync(u => u.UserId == userId);
             var currentUser = users.FirstOrDefault();
+            if (currentUser == null)
+            {
+                var rowUsers = await _userRepository.QueryAsync(u => u.RowKey == userId);
+                currentUser = rowUsers.FirstOrDefault();
+            }
 
             if (currentUser == null) return NotFound("Current user profile not found.");
             userId = currentUser.UserId;
@@ -83,7 +88,7 @@ namespace ML.Charity.API.Client.Controllers
             {
                 // Find all users created by this coordinator, plus themselves
                 var team = await _userRepository.QueryAsync(u => u.ParentUserId == userId || u.UserId == userId);
-                var teamUserIds = team.Select(t => t.UserId).ToHashSet();
+                var teamUserIds = team.Where(u => u.ParentUserId == userId || u.UserId == userId).Select(t => t.UserId).ToHashSet();
                 teamUserIds.Add(userId);
 
                 // Fetch all donations and filter in memory by the team's UserIds
@@ -101,8 +106,12 @@ namespace ML.Charity.API.Client.Controllers
                 collectedAmount = myDonations.Sum(d => d.TotalAmount);
             }
 
-            int targetKits = currentUser.TargetKits;
-            double targetAmount = currentUser.TargetAmount;
+            int targetKits = currentUser.TargetKits > 0
+                ? currentUser.TargetKits
+                : (int.TryParse(User.FindFirst("TargetKits")?.Value, out var tk) ? tk : 0);
+            double targetAmount = currentUser.TargetAmount > 0
+                ? currentUser.TargetAmount
+                : targetKits * 1000.0;
 
             // Calculate percentage safely to avoid dividing by zero
             double percentage = targetAmount > 0

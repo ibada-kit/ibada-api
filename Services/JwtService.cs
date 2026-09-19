@@ -51,6 +51,7 @@ namespace ML.Charity.API.Client.Services
                 new Claim("role", user.Role),
                 new Claim("Panchayath", user.Panchayath),
                 new Claim("WardNumber", user.WardNumber.ToString()),
+                new Claim("TargetKits", user.TargetKits.ToString()),
             };
 
             // Add dynamic hierarchy claims based on role
