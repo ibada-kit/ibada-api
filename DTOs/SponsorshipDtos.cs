@@ -202,9 +202,25 @@ namespace ML.Charity.API.Client.DTOs
         public DateTime Date { get; set; }
     }
 
+    public class SponsoredItemBreakdownEntry
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public double UnitPrice { get; set; }
+        public int TotalQuantity { get; set; }
+        public double TotalAmount { get; set; }
+        public double AmountPaid { get; set; }
+        public double BalanceAmount { get; set; }
+        public int CompletedQuantity { get; set; }
+        public int PartialQuantity { get; set; }
+        public int BookedQuantity { get; set; }
+        public int SponsorshipsCount { get; set; }
+    }
+
     public class SponsorshipSummary
     {
         public int TotalSponsorships { get; set; }
+        public int TotalIndividualItems { get; set; }
         public double TotalCommittedAmount { get; set; }
         public double TotalPaidAmount { get; set; }
         public double TotalPendingBalance { get; set; }
@@ -218,6 +234,7 @@ namespace ML.Charity.API.Client.DTOs
         public List<SponsorshipLeaderboardEntry> TopCollectors { get; set; } = new();
         public List<SponsorshipWardLeaderboardEntry> TopWards { get; set; } = new();
         public List<TopSponsoringFirmEntry> TopSponsoringFirms { get; set; } = new();
+        public List<SponsoredItemBreakdownEntry> ItemBreakdown { get; set; } = new();
         public SponsorshipSummary Summary { get; set; } = new();
         public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
     }

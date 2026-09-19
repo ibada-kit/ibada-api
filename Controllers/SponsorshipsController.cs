@@ -849,10 +849,172 @@ namespace ML.Charity.API.Client.Controllers
                     .ToList();
             }
 
-            // 4. Summary Totals
+            // 4. Individual Sponsor Item Breakdown
+            // Privileged Roles with visibility into individual items and counts:
+            // - Super Admin: Across all campaign sponsorships
+            // - Coordinator (ward = 0): General campaign coordinator across all wards
+            // - Ward Committee Lead: Across their assigned ward (or all if ward = 0)
+            // - Other Coordinators: Their assigned ward / team
+            var itemBreakdown = new List<SponsoredItemBreakdownEntry>();
+            int totalIndividualItems = 0;
+
+            bool canViewItemBreakdown = callerRole == "Admin" 
+                || (callerRole == "Coordinator" && callerWard == 0)
+                || callerRole == "WardCommittee"
+                || callerRole == "Coordinator";
+
+            // Determine scoped sponsorships for item breakdown calculation
+            IEnumerable<SponsorshipEntity> itemScopedSponsorships = allSponsorships;
+            if (callerRole == "WardCommittee" && callerWard > 0)
+            {
+                itemScopedSponsorships = allSponsorships.Where(s => s.WardNumber == callerWard);
+            }
+            else if (callerRole == "Coordinator" && callerWard > 0)
+            {
+                var teamUserIds = new HashSet<string> { callerUserId };
+                if (_userRepository != null)
+                {
+                    var team = await _userRepository.QueryAsync(u => u.ParentUserId == callerUserId || u.UserId == callerUserId);
+                    foreach (var member in team)
+                    {
+                        teamUserIds.Add(member.UserId);
+                    }
+                }
+                itemScopedSponsorships = allSponsorships.Where(s => 
+                    s.WardNumber == callerWard || 
+                    s.CollectedByUserId == callerUserId || 
+                    (!string.IsNullOrEmpty(s.ParentUserId) && s.ParentUserId == callerUserId) || 
+                    teamUserIds.Contains(s.CollectedByUserId));
+            }
+
+            var itemAggregates = new Dictionary<string, SponsoredItemBreakdownEntry>(StringComparer.OrdinalIgnoreCase);
+
+            var itemJsonOptions = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true
+            };
+
+            foreach (var s in itemScopedSponsorships)
+            {
+                List<SponsorshipItemDetailDto>? details = null;
+                if (!string.IsNullOrWhiteSpace(s.ItemsJson))
+                {
+                    try
+                    {
+                        details = JsonSerializer.Deserialize<List<SponsorshipItemDetailDto>>(s.ItemsJson, itemJsonOptions);
+                    }
+                    catch
+                    {
+                        details = null;
+                    }
+                }
+
+                if (details != null && details.Count > 0)
+                {
+                    double ratio = s.TotalAmount > 0 ? Math.Min(1.0, Math.Max(0.0, s.AmountPaid / s.TotalAmount)) : 1.0;
+
+                    foreach (var it in details)
+                    {
+                        int q = it.Quantity > 0 ? it.Quantity : 1;
+                        double sub = it.Subtotal > 0 ? it.Subtotal : (q * it.UnitPrice);
+                        double paid = Math.Round(sub * ratio, 2);
+                        double bal = Math.Max(0, sub - paid);
+                        string key = !string.IsNullOrWhiteSpace(it.ItemId) ? it.ItemId.Trim() : it.Name.Trim();
+
+                        if (!itemAggregates.TryGetValue(key, out var agg))
+                        {
+                            agg = new SponsoredItemBreakdownEntry
+                            {
+                                ItemId = it.ItemId,
+                                ItemName = it.Name,
+                                UnitPrice = it.UnitPrice,
+                                TotalQuantity = 0,
+                                TotalAmount = 0,
+                                AmountPaid = 0,
+                                BalanceAmount = 0,
+                                CompletedQuantity = 0,
+                                PartialQuantity = 0,
+                                BookedQuantity = 0,
+                                SponsorshipsCount = 0
+                            };
+                            itemAggregates[key] = agg;
+                        }
+
+                        agg.TotalQuantity += q;
+                        agg.TotalAmount += sub;
+                        agg.AmountPaid += paid;
+                        agg.BalanceAmount += bal;
+                        agg.SponsorshipsCount++;
+
+                        if (s.PaymentStatus == "Completed")
+                            agg.CompletedQuantity += q;
+                        else if (s.PaymentStatus == "Partial")
+                            agg.PartialQuantity += q;
+                        else
+                            agg.BookedQuantity += q;
+                    }
+                }
+                else
+                {
+                    // Fallback to single item fields if ItemsJson is empty
+                    int q = s.Quantity > 0 ? s.Quantity : 1;
+                    string name = string.IsNullOrWhiteSpace(s.ItemName) ? "General Package" : s.ItemName.Trim();
+                    string key = !string.IsNullOrWhiteSpace(s.ItemId) ? s.ItemId.Trim() : name;
+                    double unitPrice = s.ItemPrice > 0 ? s.ItemPrice : (s.TotalAmount / q);
+
+                    if (!itemAggregates.TryGetValue(key, out var agg))
+                    {
+                        agg = new SponsoredItemBreakdownEntry
+                        {
+                            ItemId = s.ItemId,
+                            ItemName = name,
+                            UnitPrice = unitPrice,
+                            TotalQuantity = 0,
+                            TotalAmount = 0,
+                            AmountPaid = 0,
+                            BalanceAmount = 0,
+                            CompletedQuantity = 0,
+                            PartialQuantity = 0,
+                            BookedQuantity = 0,
+                            SponsorshipsCount = 0
+                        };
+                        itemAggregates[key] = agg;
+                    }
+
+                    agg.TotalQuantity += q;
+                    agg.TotalAmount += s.TotalAmount;
+                    agg.AmountPaid += s.AmountPaid;
+                    agg.BalanceAmount += s.BalanceAmount;
+                    agg.SponsorshipsCount++;
+
+                    if (s.PaymentStatus == "Completed")
+                        agg.CompletedQuantity += q;
+                    else if (s.PaymentStatus == "Partial")
+                        agg.PartialQuantity += q;
+                    else
+                        agg.BookedQuantity += q;
+                }
+            }
+
+            itemBreakdown = itemAggregates.Values
+                .OrderByDescending(x => x.TotalQuantity)
+                .ThenByDescending(x => x.TotalAmount)
+                .ToList();
+
+            totalIndividualItems = itemBreakdown.Sum(x => x.TotalQuantity);
+
+            if (!canViewItemBreakdown)
+            {
+                totalIndividualItems = allSponsorships.Sum(s => s.Quantity > 0 ? s.Quantity : 1);
+                itemBreakdown.Clear();
+            }
+
+            // 5. Summary Totals
             var summary = new SponsorshipSummary
             {
                 TotalSponsorships = allSponsorships.Count,
+                TotalIndividualItems = totalIndividualItems,
                 TotalCommittedAmount = allSponsorships.Sum(s => s.TotalAmount),
                 TotalPaidAmount = allSponsorships.Sum(s => s.AmountPaid),
                 TotalPendingBalance = allSponsorships.Sum(s => s.BalanceAmount),
@@ -866,6 +1028,7 @@ namespace ML.Charity.API.Client.Controllers
                 TopCollectors = topCollectors.Take(100).ToList(),
                 TopWards = topWards,
                 TopSponsoringFirms = topSponsoringFirms,
+                ItemBreakdown = itemBreakdown,
                 Summary = summary,
                 GeneratedAt = DateTime.UtcNow
             });
