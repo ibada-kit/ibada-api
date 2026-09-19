@@ -63,7 +63,7 @@ namespace ML.Charity.API.Client.Services
             var descriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddMinutes(double.Parse(jwtSettings["DurationInMinutes"]!)),
+                Expires = DateTime.UtcNow.AddMinutes(DurationInMinutes),
                 Issuer = jwtSettings["Issuer"],
                 Audience = jwtSettings["Audience"],
                 SigningCredentials = credentials
@@ -71,6 +71,15 @@ namespace ML.Charity.API.Client.Services
 
             var handler = new JsonWebTokenHandler();
             return handler.CreateToken(descriptor);
+        }
+
+        public double DurationInMinutes
+        {
+            get
+            {
+                var durationStr = _configuration["Jwt:DurationInMinutes"] ?? _configuration.GetSection("Jwt")["DurationInMinutes"];
+                return double.TryParse(durationStr, out var d) ? d : 60;
+            }
         }
     }
 }

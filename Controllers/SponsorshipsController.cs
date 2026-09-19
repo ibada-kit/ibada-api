@@ -305,6 +305,11 @@ namespace ML.Charity.API.Client.Controllers
             double balanceAmount;
             string paymentStatus;
 
+            if (request.InitialAmountPaid.HasValue && request.InitialAmountPaid.Value < 0)
+            {
+                return BadRequest(new { message = "Payment amount cannot be negative." });
+            }
+
             switch (request.PaymentOption.Trim())
             {
                 case "PayFull":
@@ -316,6 +321,10 @@ namespace ML.Charity.API.Client.Controllers
                 case "Book":
                     // Booking: can be 0 or small booking token amount
                     amountPaid = request.InitialAmountPaid ?? 0.0;
+                    if (amountPaid < 0)
+                    {
+                        return BadRequest(new { message = "Payment amount cannot be negative." });
+                    }
                     if (amountPaid > totalAmount)
                     {
                         return BadRequest(new { message = $"Initial booking amount ({amountPaid}) cannot exceed total amount ({totalAmount})." });

@@ -14,11 +14,13 @@ namespace ML.Charity.API.Client.Controllers
     {
         private readonly ITableStorageService<UserEntity> _userRepository;
         private readonly JwtService _jwtService;
+        private readonly IConfiguration? _configuration;
 
-        public AuthController(ITableStorageService<UserEntity> userRepository, JwtService jwtService)
+        public AuthController(ITableStorageService<UserEntity> userRepository, JwtService jwtService, IConfiguration? configuration = null)
         {
             _userRepository = userRepository;
             _jwtService = jwtService;
+            _configuration = configuration;
         }
 
         [HttpPost("login")]
@@ -32,14 +34,16 @@ namespace ML.Charity.API.Client.Controllers
             if (user == null || !user.IsActive)
                 return Unauthorized(new { Message = "Invalid phone number or inactive account." });
 
-            bool isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash)
-                                || BCrypt.Net.BCrypt.Verify(request.Password.ToLower(), user.PasswordHash)
-                                || BCrypt.Net.BCrypt.Verify(request.Password.ToUpper(), user.PasswordHash);
+            // Enforce standard, secure, single-pass case-sensitive verification
+            bool isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
 
             if (!isPasswordValid)
                 return Unauthorized(new { Message = "Invalid password." });
 
             var token = _jwtService.GenerateToken(user);
+            double duration = _configuration != null && double.TryParse(_configuration["Jwt:DurationInMinutes"], out var d)
+                ? d
+                : _jwtService.DurationInMinutes;
 
             return Ok(new LoginResponse
             {
@@ -47,7 +51,7 @@ namespace ML.Charity.API.Client.Controllers
                 Role = user.Role,
                 FullName = user.FullName,
                 NeedsPasswordChange = false, // You can add logic here if you track password changes
-                ExpiresAt = DateTime.UtcNow.AddMinutes(120) // Match JWT settings
+                ExpiresAt = DateTime.UtcNow.AddMinutes(duration) // Match JWT settings
             });
         }
 
