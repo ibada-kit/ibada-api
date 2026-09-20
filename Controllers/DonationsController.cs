@@ -16,18 +16,34 @@ namespace ML.Charity.API.Client.Controllers
         private readonly ITableStorageService<DonationEntity> _donationRepository;
         private readonly ITableStorageService<UserEntity>? _userRepository;
         private readonly IWhatsAppService _whatsappService;
+        private readonly ITableStorageService<CampaignSettingsEntity>? _settingsRepository;
 
-        // Define the cost of one kit here (1 Kit = 1000 INR)
+        // Fallback default cost of one kit (1 Kit = 1000 INR)
         private const double PRICE_PER_KIT = 1000.0;
 
         public DonationsController(
             ITableStorageService<DonationEntity> donationRepository,
             ITableStorageService<UserEntity>? userRepository,
-            IWhatsAppService whatsappService)
+            IWhatsAppService whatsappService,
+            ITableStorageService<CampaignSettingsEntity>? settingsRepository = null)
         {
             _donationRepository = donationRepository;
             _userRepository = userRepository;
             _whatsappService = whatsappService;
+            _settingsRepository = settingsRepository;
+        }
+
+        private async Task<double> GetCurrentKitPriceAsync()
+        {
+            if (_settingsRepository != null)
+            {
+                var setting = await _settingsRepository.GetEntityAsync("GLOBAL", "KitPrice");
+                if (setting != null && setting.KitPrice > 0)
+                {
+                    return setting.KitPrice;
+                }
+            }
+            return PRICE_PER_KIT;
         }
 
         [HttpGet]
@@ -194,8 +210,9 @@ namespace ML.Charity.API.Client.Controllers
                 int.TryParse(wardString, out wardNumber);
             }
 
-            // Calculate exact amount securely on the server
-            double calculatedAmount = request.KitCount * PRICE_PER_KIT;
+            // Calculate exact amount securely on the server using dynamic kit price from Azure Table Storage
+            double currentKitPrice = await GetCurrentKitPriceAsync();
+            double calculatedAmount = request.KitCount * currentKitPrice;
 
             // Generate Keys
             string shortId = Guid.NewGuid().ToString().Substring(0, 8).ToUpper();

@@ -107,6 +107,12 @@ builder.Services.AddSingleton<ITableStorageService<WardEntity>>(sp =>
     return new TableStorageService<WardEntity>(client, "Wards");
 });
 
+builder.Services.AddSingleton<ITableStorageService<CampaignSettingsEntity>>(sp =>
+{
+    var client = sp.GetRequiredService<TableServiceClient>();
+    return new TableStorageService<CampaignSettingsEntity>(client, "CampaignSettings");
+});
+
 // -----------------------------------------------------------
 // 3. Application Services
 // -----------------------------------------------------------

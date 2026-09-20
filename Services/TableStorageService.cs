@@ -38,6 +38,18 @@ public class TableStorageService<T> : ITableStorageService<T> where T : class, I
         }
     }
 
+    public async Task UpsertAsync(T entity)
+    {
+        try
+        {
+            await _tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace);
+        }
+        catch (RequestFailedException ex)
+        {
+            throw new Exception($"Failed to upsert entity in table {_tableClient.Name}: {ex.Message}", ex);
+        }
+    }
+
     public async Task DeleteAsync(string partitionKey, string rowKey)
     {
         try

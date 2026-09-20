@@ -16,13 +16,29 @@ namespace ML.Charity.API.Client.Controllers
     {
         private readonly ITableStorageService<UserEntity> _userRepository;
         private readonly ITableStorageService<DonationEntity> _donationRepository;
+        private readonly ITableStorageService<CampaignSettingsEntity>? _settingsRepository;
 
         public UsersController(
             ITableStorageService<UserEntity> userRepository,
-            ITableStorageService<DonationEntity>? donationRepository = null)
+            ITableStorageService<DonationEntity>? donationRepository = null,
+            ITableStorageService<CampaignSettingsEntity>? settingsRepository = null)
         {
             _userRepository = userRepository;
             _donationRepository = donationRepository!;
+            _settingsRepository = settingsRepository;
+        }
+
+        private async Task<double> GetCurrentKitPriceAsync()
+        {
+            if (_settingsRepository != null)
+            {
+                var setting = await _settingsRepository.GetEntityAsync("GLOBAL", "KitPrice");
+                if (setting != null && setting.KitPrice > 0)
+                {
+                    return setting.KitPrice;
+                }
+            }
+            return 1000.0;
         }
 
         [HttpPost]
@@ -58,7 +74,7 @@ namespace ML.Charity.API.Client.Controllers
                 Panchayath = request.Panchayath ?? creatorPanchayath,
                 IsActive = true,
                 TargetKits = request.TargetKits ?? 0,
-                TargetAmount = (request.TargetKits ?? 0) * 1000.0 // Calculates financial target securely
+                TargetAmount = (request.TargetKits ?? 0) * (await GetCurrentKitPriceAsync()) // Calculates financial target securely
             };
 
             // 2. Enforce Hierarchy & Role Constraints
@@ -234,8 +250,9 @@ namespace ML.Charity.API.Client.Controllers
                     return Forbid("Ward Committees can only set targets for volunteers in their ward.");
             }
 
+            double currentKitPrice = await GetCurrentKitPriceAsync();
             targetUser.TargetKits = request.TargetKits;
-            targetUser.TargetAmount = request.TargetKits * 1000.0;
+            targetUser.TargetAmount = request.TargetKits * currentKitPrice;
 
             await _userRepository.UpdateAsync(targetUser);
 
@@ -265,8 +282,9 @@ namespace ML.Charity.API.Client.Controllers
 
             if (request.TargetKits.HasValue)
             {
+                double currentKitPrice = await GetCurrentKitPriceAsync();
                 user.TargetKits = request.TargetKits.Value;
-                user.TargetAmount = request.TargetKits.Value * 1000.0;
+                user.TargetAmount = request.TargetKits.Value * currentKitPrice;
             }
 
             if (request.IsActive.HasValue)

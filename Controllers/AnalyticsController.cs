@@ -16,13 +16,29 @@ namespace ML.Charity.API.Client.Controllers
     {
         private readonly ITableStorageService<UserEntity> _userRepository;
         private readonly ITableStorageService<DonationEntity> _donationRepository;
+        private readonly ITableStorageService<CampaignSettingsEntity>? _settingsRepository;
 
         public AnalyticsController(
             ITableStorageService<UserEntity> userRepository,
-            ITableStorageService<DonationEntity> donationRepository)
+            ITableStorageService<DonationEntity> donationRepository,
+            ITableStorageService<CampaignSettingsEntity>? settingsRepository = null)
         {
             _userRepository = userRepository;
             _donationRepository = donationRepository;
+            _settingsRepository = settingsRepository;
+        }
+
+        private async Task<double> GetCurrentKitPriceAsync()
+        {
+            if (_settingsRepository != null)
+            {
+                var setting = await _settingsRepository.GetEntityAsync("GLOBAL", "KitPrice");
+                if (setting != null && setting.KitPrice > 0)
+                {
+                    return setting.KitPrice;
+                }
+            }
+            return 1000.0;
         }
 
         [HttpGet("my-progress")]
@@ -109,9 +125,10 @@ namespace ML.Charity.API.Client.Controllers
             int targetKits = currentUser.TargetKits > 0
                 ? currentUser.TargetKits
                 : (int.TryParse(User.FindFirst("TargetKits")?.Value, out var tk) ? tk : 0);
+            double currentKitPrice = await GetCurrentKitPriceAsync();
             double targetAmount = currentUser.TargetAmount > 0
                 ? currentUser.TargetAmount
-                : targetKits * 1000.0;
+                : targetKits * currentKitPrice;
 
             // Calculate percentage safely to avoid dividing by zero
             double percentage = targetAmount > 0

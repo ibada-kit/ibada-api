@@ -12,6 +12,7 @@ namespace ML.Charity.API.Client.Services
 
         Task AddAsync(T entity);
         Task UpdateAsync(T entity);
+        Task UpsertAsync(T entity);
         Task DeleteAsync(string partitionKey, string rowKey);
         Task<T?> GetEntityAsync(string partitionKey, string rowKey);
         Task<T> AddEntityAsync(T entity);
