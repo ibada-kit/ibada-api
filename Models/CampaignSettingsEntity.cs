@@ -21,7 +21,7 @@ namespace ML.Charity.API.Client.Models
         public string ModifiedBy { get; set; } = "System";
 
         /// <summary>
-        /// Sequential counter for lucky draw serial numbers, starting at 10000.
+        /// Sequential counter for serial numbers, starting at 10000.
         /// Stored under RowKey = "DonationSerialCounter".
         /// </summary>
         public int NextSerialNumber { get; set; } = 10000;

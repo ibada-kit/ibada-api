@@ -311,7 +311,7 @@ namespace ML.Charity.API.Client.Controllers
             double currentKitPrice = await GetCurrentKitPriceAsync();
             double calculatedAmount = request.KitCount * currentKitPrice;
 
-            // Generate Keys & Lucky Draw Serial Number (starting at 10000)
+            // Generate Keys & Serial Number (starting at 10000)
             string shortId = Guid.NewGuid().ToString().Substring(0, 8).ToUpper();
             string receiptToken = $"MDV-{shortId}";
             string donationId = Guid.NewGuid().ToString();
