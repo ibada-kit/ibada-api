@@ -34,6 +34,7 @@ namespace ML.Charity.API.Client.DTOs
     {
         public string DonationId { get; set; } = string.Empty;
         public string ReceiptToken { get; set; } = string.Empty;
+        public int SerialNumber { get; set; }
         public string DonorName { get; set; } = string.Empty;
         public string WhatsAppNumber { get; set; } = string.Empty;
         public int KitCount { get; set; }

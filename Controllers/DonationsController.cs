@@ -21,6 +21,92 @@ namespace ML.Charity.API.Client.Controllers
         // Fallback default cost of one kit (1 Kit = 1000 INR)
         private const double PRICE_PER_KIT = 1000.0;
 
+        public const string SERIAL_COUNTER_ROW = "DonationSerialCounter";
+        public const int INITIAL_SERIAL_NUMBER = 10000;
+        private static readonly SemaphoreSlim _serialCounterLock = new SemaphoreSlim(1, 1);
+        private static int _fallbackNextSerial = INITIAL_SERIAL_NUMBER;
+
+        public static void ResetFallbackSerial(int start = INITIAL_SERIAL_NUMBER)
+        {
+            _fallbackNextSerial = start;
+        }
+
+        private async Task<int> GenerateNextSerialNumberAsync()
+        {
+            await _serialCounterLock.WaitAsync();
+            try
+            {
+                int serialToAssign = INITIAL_SERIAL_NUMBER;
+
+                if (_settingsRepository != null)
+                {
+                    CampaignSettingsEntity? counterSetting = null;
+                    try
+                    {
+                        counterSetting = await _settingsRepository.GetEntityAsync("GLOBAL", SERIAL_COUNTER_ROW);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[WARNING] Failed to fetch {SERIAL_COUNTER_ROW} from Azure Table: {ex.Message}");
+                    }
+
+                    if (counterSetting != null && counterSetting.NextSerialNumber >= INITIAL_SERIAL_NUMBER)
+                    {
+                        serialToAssign = counterSetting.NextSerialNumber;
+                    }
+                    else
+                    {
+                        // Check if any existing donations in DB have a SerialNumber >= 10000
+                        try
+                        {
+                            var existingDonations = await _donationRepository.QueryAsync(d => d.SerialNumber >= INITIAL_SERIAL_NUMBER);
+                            if (existingDonations != null && existingDonations.Any())
+                            {
+                                serialToAssign = existingDonations.Max(d => d.SerialNumber) + 1;
+                            }
+                        }
+                        catch
+                        {
+                            serialToAssign = INITIAL_SERIAL_NUMBER;
+                        }
+                    }
+
+                    // Save the incremented counter to Azure Table
+                    var entityToSave = counterSetting ?? new CampaignSettingsEntity
+                    {
+                        PartitionKey = "GLOBAL",
+                        RowKey = SERIAL_COUNTER_ROW
+                    };
+                    entityToSave.NextSerialNumber = serialToAssign + 1;
+                    entityToSave.ModifiedDate = DateTimeOffset.UtcNow;
+                    entityToSave.ModifiedBy = "System";
+
+                    try
+                    {
+                        await _settingsRepository.UpsertAsync(entityToSave);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[WARNING] Failed to upsert {SERIAL_COUNTER_ROW} to Azure Table: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    if (_fallbackNextSerial < INITIAL_SERIAL_NUMBER)
+                    {
+                        _fallbackNextSerial = INITIAL_SERIAL_NUMBER;
+                    }
+                    serialToAssign = _fallbackNextSerial++;
+                }
+
+                return serialToAssign;
+            }
+            finally
+            {
+                _serialCounterLock.Release();
+            }
+        }
+
         public DonationsController(
             ITableStorageService<DonationEntity> donationRepository,
             ITableStorageService<UserEntity>? userRepository,
@@ -74,7 +160,7 @@ namespace ML.Charity.API.Client.Controllers
                 callerWard = currentUser?.WardNumber ?? 0;
             }
 
-            if (!string.IsNullOrEmpty(wardString) && int.TryParse(wardString, out int parsedWard))
+            if (callerWard == 0 && !string.IsNullOrEmpty(wardString) && int.TryParse(wardString, out int parsedWard))
             {
                 callerWard = parsedWard;
             }
@@ -137,6 +223,7 @@ namespace ML.Charity.API.Client.Controllers
                 {
                     DonationId = d.DonationId,
                     ReceiptToken = d.RowKey,
+                    SerialNumber = d.SerialNumber,
                     DonorName = d.DonorName,
                     WhatsAppNumber = d.WhatsAppNumber,
                     KitCount = d.KitCount,
@@ -205,19 +292,30 @@ namespace ML.Charity.API.Client.Controllers
             }
 
             int wardNumber = 0;
-            if (!string.IsNullOrEmpty(wardString))
+            if (_userRepository != null)
             {
-                int.TryParse(wardString, out wardNumber);
+                var users = await _userRepository.QueryAsync(u => u.UserId == userId || u.RowKey == userId);
+                var currentUser = users.FirstOrDefault();
+                if (currentUser != null && currentUser.WardNumber > 0)
+                {
+                    wardNumber = currentUser.WardNumber;
+                }
+            }
+
+            if (wardNumber == 0 && !string.IsNullOrEmpty(wardString) && int.TryParse(wardString, out int parsedWard))
+            {
+                wardNumber = parsedWard;
             }
 
             // Calculate exact amount securely on the server using dynamic kit price from Azure Table Storage
             double currentKitPrice = await GetCurrentKitPriceAsync();
             double calculatedAmount = request.KitCount * currentKitPrice;
 
-            // Generate Keys
+            // Generate Keys & Lucky Draw Serial Number (starting at 10000)
             string shortId = Guid.NewGuid().ToString().Substring(0, 8).ToUpper();
             string receiptToken = $"MDV-{shortId}";
             string donationId = Guid.NewGuid().ToString();
+            int serialNumber = await GenerateNextSerialNumberAsync();
 
             // Create the Entity matching DTO properties
             var donation = new DonationEntity
@@ -225,6 +323,7 @@ namespace ML.Charity.API.Client.Controllers
                 PartitionKey = panchayath,
                 RowKey = receiptToken,
                 DonationId = donationId,
+                SerialNumber = serialNumber,
                 UserId = userId,
                 WardNumber = wardNumber,
                 DonorName = request.DonorName,
@@ -265,6 +364,7 @@ namespace ML.Charity.API.Client.Controllers
             {
                 DonationId = donationId,
                 ReceiptToken = receiptToken,
+                SerialNumber = serialNumber,
                 DonorName = request.DonorName,
                 WhatsAppNumber = request.WhatsAppNumber ?? string.Empty,
                 KitCount = request.KitCount,

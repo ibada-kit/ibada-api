@@ -23,5 +23,10 @@ namespace ML.Charity.API.Client.Models
         public int KitCount { get; set; }
         public double TotalAmount { get; set; }
         public DateTime TransactionDate { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// Sequential lucky draw serial number starting from 10000 for kit donations.
+        /// </summary>
+        public int SerialNumber { get; set; }
     }
 }

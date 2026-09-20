@@ -321,8 +321,18 @@ namespace ML.Charity.API.Client.Controllers
                     user.PartitionKey = request.Panchayath!;
                 }
 
-                await _userRepository.DeleteAsync(oldPartition, oldRowKey);
+                // Insert new record into the updated partition/row key first to prevent data loss race conditions
                 await _userRepository.AddAsync(user);
+
+                try
+                {
+                    await _userRepository.DeleteAsync(oldPartition, oldRowKey);
+                }
+                catch (Exception ex)
+                {
+                    // Non-fatal if delete fails; the user account has safely been saved in the new partition
+                    Console.WriteLine($"[UsersController] Warning: Failed to clean up old partition {oldPartition}/{oldRowKey}: {ex.Message}");
+                }
             }
             else
             {
