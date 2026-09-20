@@ -210,7 +210,7 @@ namespace ML.Charity.API.Client.Controllers
         }
 
         [HttpPut("{userId}/target")]
-        [Authorize(Roles = "Admin,Coordinator")]
+        [Authorize(Roles = "Admin,Coordinator,WardCommittee")]
         public async Task<IActionResult> UpdateTarget(string userId, [FromBody] UpdateTargetRequest request)
         {
             var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
@@ -224,6 +224,15 @@ namespace ML.Charity.API.Client.Controllers
             // Coordinators can only update targets for users they created
             if (callerRole == "Coordinator" && targetUser.ParentUserId != callerId)
                 return Forbid("You can only set targets for your direct team members.");
+
+            // Ward Committees can only update targets for volunteers in their own ward
+            if (callerRole == "WardCommittee")
+            {
+                var wardStr = User.FindFirst("WardNumber")?.Value;
+                int.TryParse(wardStr, out int wardNum);
+                if (targetUser.Role != "Volunteer" || (targetUser.ParentUserId != callerId && (wardNum <= 0 || targetUser.WardNumber != wardNum)))
+                    return Forbid("Ward Committees can only set targets for volunteers in their ward.");
+            }
 
             targetUser.TargetKits = request.TargetKits;
             targetUser.TargetAmount = request.TargetKits * 1000.0;

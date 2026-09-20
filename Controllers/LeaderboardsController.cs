@@ -72,18 +72,36 @@ public class LeaderboardsController : ControllerBase
             position++;
         }
 
-        // 3. Aggregate Top Wards (calculates real ward totals and actual targets from assigned users)
+        // 3. Aggregate Top Wards
+        // Business Rule: A ward's relief target is fixed and defined by the Ward Committee Lead.
+        // Volunteers assigned to the ward share this target rather than accumulating into or inflating it.
         var wardTargets = allUsers
             .Where(u => u.WardNumber > 0)
             .GroupBy(u => u.WardNumber)
-            .ToDictionary(g => g.Key, g => g.Sum(u => u.TargetKits));
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    // Primary: Authoritative Ward Committee Lead target
+                    var lead = g.FirstOrDefault(u => u.Role == "WardCommittee" && u.TargetKits > 0);
+                    if (lead != null)
+                        return lead.TargetKits;
+
+                    // Secondary: Assigned Coordinator target if any
+                    var coord = g.FirstOrDefault(u => u.Role == "Coordinator" && u.TargetKits > 0);
+                    if (coord != null)
+                        return coord.TargetKits;
+
+                    // Fallback: If only volunteers exist with no lead, use sum of their targets
+                    return g.Where(u => u.Role == "Volunteer").Sum(u => u.TargetKits);
+                });
 
         var wardVolunteers = allUsers
-            .Where(u => u.WardNumber > 0)
+            .Where(u => u.WardNumber > 0 && u.Role == "Volunteer")
             .GroupBy(u => u.WardNumber)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        var wardStats = allDonations
+        var wardStatsMap = allDonations
             .Select(d => new
             {
                 WardNumber = d.WardNumber > 0 ? d.WardNumber : (userMap.TryGetValue(d.UserId, out var u) ? u.WardNumber : 0),
@@ -92,35 +110,56 @@ public class LeaderboardsController : ControllerBase
             })
             .Where(x => x.WardNumber > 0)
             .GroupBy(x => x.WardNumber)
-            .Select(g => new
+            .ToDictionary(g => g.Key, g => new
             {
                 WardNumber = g.Key,
                 TotalKits = g.Sum(x => x.KitCount),
                 TotalAmount = g.Sum(x => x.TotalAmount),
                 DonationsCount = g.Count()
-            })
-            .OrderByDescending(w => w.TotalKits)
+            });
+
+        // Include all wards that have recorded donations OR have assigned users/targets
+        var allWardNumbers = wardStatsMap.Keys
+            .Union(wardTargets.Keys)
+            .Where(w => w > 0)
+            .Distinct()
             .ToList();
 
-        var topWards = new List<LeaderboardEntry>();
-        int wardPosition = 1;
-
-        foreach (var stat in wardStats)
-        {
-            topWards.Add(new LeaderboardEntry
+        var topWards = allWardNumbers
+            .Select(w =>
             {
-                Position = wardPosition,
-                WardNumber = stat.WardNumber,
-                Name = $"Ward {stat.WardNumber}",
-                TotalKits = stat.TotalKits,
-                TotalAmount = stat.TotalAmount,
-                DonationsCount = stat.DonationsCount,
-                TargetKits = wardTargets.TryGetValue(stat.WardNumber, out int t) ? t : 0,
-                VolunteerCount = wardVolunteers.TryGetValue(stat.WardNumber, out int vc) ? vc : 0,
-                RankBadge = AssignBadge(wardPosition)
-            });
-            wardPosition++;
-        }
+                wardStatsMap.TryGetValue(w, out var stat);
+                int totalKits = stat?.TotalKits ?? 0;
+                double totalAmount = stat?.TotalAmount ?? 0.0;
+                int donationsCount = stat?.DonationsCount ?? 0;
+                int target = wardTargets.TryGetValue(w, out int t) ? t : 0;
+                int volCount = wardVolunteers.TryGetValue(w, out int vc) ? vc : 0;
+
+                return new
+                {
+                    WardNumber = w,
+                    TotalKits = totalKits,
+                    TotalAmount = totalAmount,
+                    DonationsCount = donationsCount,
+                    TargetKits = target,
+                    VolunteerCount = volCount
+                };
+            })
+            .OrderByDescending(w => w.TotalKits)
+            .ThenBy(w => w.WardNumber)
+            .Select((w, idx) => new LeaderboardEntry
+            {
+                Position = idx + 1,
+                WardNumber = w.WardNumber,
+                Name = $"Ward {w.WardNumber}",
+                TotalKits = w.TotalKits,
+                TotalAmount = w.TotalAmount,
+                DonationsCount = w.DonationsCount,
+                TargetKits = w.TargetKits,
+                VolunteerCount = w.VolunteerCount,
+                RankBadge = AssignBadge(idx + 1)
+            })
+            .ToList();
 
         // 4. Return the combined payload
         return Ok(new LeaderboardResponse
