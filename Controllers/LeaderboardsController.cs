@@ -22,6 +22,19 @@ public class LeaderboardsController : ControllerBase
         _userRepository = userRepository;
     }
 
+    private static double GetEffectiveAmountPaid(DonationEntity d)
+    {
+        if (d.AmountPaid > 0 || d.BalanceAmount > 0)
+        {
+            return d.AmountPaid;
+        }
+        if (string.Equals(d.PaymentStatus, "Booked", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0.0;
+        }
+        return d.TotalAmount;
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetLeaderboard()
     {
@@ -42,7 +55,7 @@ public class LeaderboardsController : ControllerBase
             {
                 UserId = g.Key,
                 TotalKits = g.Sum(d => d.KitCount),
-                TotalAmount = g.Sum(d => d.TotalAmount),
+                TotalAmount = g.Sum(GetEffectiveAmountPaid),
                 DonationsCount = g.Count()
             })
             .OrderByDescending(v => v.TotalKits)
@@ -106,7 +119,7 @@ public class LeaderboardsController : ControllerBase
             {
                 WardNumber = d.WardNumber > 0 ? d.WardNumber : (userMap.TryGetValue(d.UserId, out var u) ? u.WardNumber : 0),
                 d.KitCount,
-                d.TotalAmount
+                Amount = GetEffectiveAmountPaid(d)
             })
             .Where(x => x.WardNumber > 0)
             .GroupBy(x => x.WardNumber)
@@ -114,7 +127,7 @@ public class LeaderboardsController : ControllerBase
             {
                 WardNumber = g.Key,
                 TotalKits = g.Sum(x => x.KitCount),
-                TotalAmount = g.Sum(x => x.TotalAmount),
+                TotalAmount = g.Sum(x => x.Amount),
                 DonationsCount = g.Count()
             });
 

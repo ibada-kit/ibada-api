@@ -41,6 +41,30 @@ namespace ML.Charity.API.Client.Controllers
             return 1000.0;
         }
 
+        private async Task<UserEntity?> FindUserByIdOrPhoneAsync(string identifier)
+        {
+            var clean = (identifier ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(clean)) return null;
+
+            var digitsOnly = new string(clean.Where(char.IsDigit).ToArray());
+            var phone10 = digitsOnly.Length >= 10 ? digitsOnly.Substring(digitsOnly.Length - 10) : digitsOnly;
+            var phoneWithCountry = !string.IsNullOrEmpty(phone10) ? "+91" + phone10 : clean;
+            var phoneWithoutPlus = !string.IsNullOrEmpty(phone10) ? "91" + phone10 : clean;
+
+            var users = await _userRepository.QueryAsync(u =>
+                u.UserId == clean ||
+                u.PhoneNumber == clean ||
+                u.PhoneNumber == phoneWithCountry ||
+                u.PhoneNumber == phoneWithoutPlus ||
+                u.PhoneNumber == phone10 ||
+                u.RowKey == clean ||
+                u.RowKey == phoneWithCountry ||
+                u.RowKey == phoneWithoutPlus ||
+                u.RowKey == phone10);
+
+            return users.FirstOrDefault();
+        }
+
         [HttpPost]
         public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
         {
@@ -135,6 +159,19 @@ namespace ML.Charity.API.Client.Controllers
             return Ok(new { Message = "User created successfully.", UserId = newUser.UserId, DefaultPassword = defaultPassword });
         }
 
+        private static double GetEffectiveAmountPaid(DonationEntity d)
+        {
+            if (d.AmountPaid > 0 || d.BalanceAmount > 0)
+            {
+                return d.AmountPaid;
+            }
+            if (string.Equals(d.PaymentStatus, "Booked", StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+            return d.TotalAmount;
+        }
+
         [HttpGet("coordinators")]
         [Authorize(Roles = "Admin,Coordinator")]
         public async Task<IActionResult> GetCoordinators()
@@ -173,7 +210,7 @@ namespace ML.Charity.API.Client.Controllers
                 {
                     var wardDons = allDonations.Where(d => d.WardNumber == u.WardNumber);
                     kits = wardDons.Sum(d => d.KitCount);
-                    amount = wardDons.Sum(d => d.TotalAmount);
+                    amount = wardDons.Sum(GetEffectiveAmountPaid);
                 }
                 else // Coordinator
                 {
@@ -185,7 +222,7 @@ namespace ML.Charity.API.Client.Controllers
 
                     var coordDons = allDonations.Where(d => managedIds.Contains(d.UserId));
                     kits = coordDons.Sum(d => d.KitCount);
-                    amount = coordDons.Sum(d => d.TotalAmount);
+                    amount = coordDons.Sum(GetEffectiveAmountPaid);
                 }
 
                 var resp = MapToResponse(u);
@@ -204,25 +241,49 @@ namespace ML.Charity.API.Client.Controllers
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
             var userId = GetCurrentUserId();
 
+            List<UserEntity> users;
             if (role == "Admin")
             {
                 // Admins can view the entire volunteer list
-                var users = await _userRepository.QueryAsync(u => u.Role == "Volunteer");
-                return Ok(users.Select(MapToResponse));
+                users = (await _userRepository.QueryAsync(u => u.Role == "Volunteer")).ToList();
             }
             else if (role == "WardCommittee")
             {
                 var wardStr = User.FindFirst("WardNumber")?.Value;
                 int.TryParse(wardStr, out int wardNum);
-                var users = await _userRepository.QueryAsync(u => u.Role == "Volunteer" && (u.ParentUserId == userId || (wardNum > 0 && u.WardNumber == wardNum)));
-                return Ok(users.Select(MapToResponse));
+                users = (await _userRepository.QueryAsync(u => u.Role == "Volunteer" && (u.ParentUserId == userId || (wardNum > 0 && u.WardNumber == wardNum)))).ToList();
             }
             else
             {
                 // Coordinators can only view the volunteers assigned directly to them
-                var users = await _userRepository.QueryAsync(u => u.Role == "Volunteer" && u.ParentUserId == userId);
-                return Ok(users.Select(MapToResponse));
+                users = (await _userRepository.QueryAsync(u => u.Role == "Volunteer" && u.ParentUserId == userId)).ToList();
             }
+
+            var allDonations = _donationRepository != null
+                ? (await _donationRepository.QueryEntitiesAsync(null)) ?? (await _donationRepository.QueryAsync(d => true)) ?? new List<DonationEntity>()
+                : new List<DonationEntity>();
+
+            var kitsByVol = allDonations
+                .Where(d => !string.IsNullOrEmpty(d.UserId))
+                .GroupBy(d => d.UserId)
+                .ToDictionary(g => g.Key, g => new
+                {
+                    Kits = g.Sum(d => d.KitCount),
+                    Amount = g.Sum(GetEffectiveAmountPaid)
+                });
+
+            var responses = users.Select(u =>
+            {
+                var resp = MapToResponse(u);
+                if (!string.IsNullOrEmpty(u.UserId) && kitsByVol.TryGetValue(u.UserId, out var stats))
+                {
+                    resp.KitsCollected = stats.Kits;
+                    resp.CollectedAmount = stats.Amount;
+                }
+                return resp;
+            });
+
+            return Ok(responses);
         }
 
         [HttpPut("{userId}/target")]
@@ -232,9 +293,7 @@ namespace ML.Charity.API.Client.Controllers
             var callerRole = User.FindFirst(ClaimTypes.Role)?.Value;
             var callerId = GetCurrentUserId();
 
-            var users = await _userRepository.QueryAsync(u => u.UserId == userId);
-            var targetUser = users.FirstOrDefault();
-
+            var targetUser = await FindUserByIdOrPhoneAsync(userId);
             if (targetUser == null) return NotFound("User not found.");
 
             // Coordinators can only update targets for users they created
@@ -263,9 +322,7 @@ namespace ML.Charity.API.Client.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateUser(string userId, [FromBody] UpdateUserRequest request)
         {
-            var users = await _userRepository.QueryAsync(u => u.UserId == userId);
-            var user = users.FirstOrDefault();
-
+            var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
             if (!string.IsNullOrWhiteSpace(request.FullName))
@@ -353,19 +410,8 @@ namespace ML.Charity.API.Client.Controllers
         {
             var callerRole = User.FindFirst(ClaimTypes.Role)?.Value
                           ?? User.FindFirst("role")?.Value;
-            var cleanUserId = (userId ?? string.Empty).Trim();
-            var phoneWithCountry = cleanUserId.StartsWith("+91") ? cleanUserId : "+91" + cleanUserId.TrimStart('+');
-            var cleanDigits = cleanUserId.Replace("+91", "").Trim();
 
-            var users = await _userRepository.QueryAsync(u =>
-                u.UserId == cleanUserId ||
-                u.PhoneNumber == cleanUserId ||
-                u.PhoneNumber == phoneWithCountry ||
-                u.PhoneNumber == cleanDigits ||
-                u.RowKey == cleanUserId ||
-                u.RowKey == phoneWithCountry);
-            var user = users.FirstOrDefault();
-
+            var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
             // Coordinators and Ward Committees can only reset passwords for volunteers
@@ -402,9 +448,7 @@ namespace ML.Charity.API.Client.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteUser(string userId)
         {
-            var users = await _userRepository.QueryAsync(u => u.UserId == userId);
-            var user = users.FirstOrDefault();
-
+            var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
             user.IsActive = false;

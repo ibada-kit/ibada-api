@@ -28,5 +28,19 @@ namespace ML.Charity.API.Client.Models
         /// Sequential lucky draw serial number starting from 10000 for kit donations.
         /// </summary>
         public int SerialNumber { get; set; }
+
+        // Payment Options: PayFull, Book, Advance
+        public string PaymentOption { get; set; } = "PayFull";
+        public double AmountPaid { get; set; } = 0;
+        public double BalanceAmount { get; set; } = 0;
+
+        // Payment Status: Completed, Partial, Booked
+        public string PaymentStatus { get; set; } = "Completed";
+        public string PaymentMode { get; set; } = "Cash"; // Cash, UPI, Cheque, BankTransfer
+        public string TransactionReference { get; set; } = string.Empty;
+
+        public string Notes { get; set; } = string.Empty;
+        public DateTime UpdateDate { get; set; } = DateTime.UtcNow;
+        public string UpdatedBy { get; set; } = string.Empty;
     }
 }

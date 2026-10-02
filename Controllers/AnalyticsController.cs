@@ -41,6 +41,21 @@ namespace ML.Charity.API.Client.Controllers
             return 1000.0;
         }
 
+        private static double GetEffectiveAmountPaid(DonationEntity d)
+        {
+            if (d.AmountPaid > 0 || d.BalanceAmount > 0)
+            {
+                return d.AmountPaid;
+            }
+            // For legacy records with no AmountPaid/BalanceAmount populated:
+            // If explicitly marked Booked with 0 paid, it's 0. Otherwise it's the legacy full TotalAmount.
+            if (string.Equals(d.PaymentStatus, "Booked", StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.0;
+            }
+            return d.TotalAmount;
+        }
+
         [HttpGet("my-progress")]
         public async Task<IActionResult> GetMyProgress()
         {
@@ -75,7 +90,7 @@ namespace ML.Charity.API.Client.Controllers
             {
                 var allDonations = await _donationRepository.QueryAsync(d => d.TotalAmount > 0);
                 collectedKits = allDonations.Sum(d => d.KitCount);
-                collectedAmount = allDonations.Sum(d => d.TotalAmount);
+                collectedAmount = allDonations.Sum(GetEffectiveAmountPaid);
 
                 return Ok(new
                 {
@@ -97,7 +112,7 @@ namespace ML.Charity.API.Client.Controllers
 
                 var wardDonations = await _donationRepository.QueryAsync(d => d.WardNumber == ward);
                 collectedKits = wardDonations.Sum(d => d.KitCount);
-                collectedAmount = wardDonations.Sum(d => d.TotalAmount);
+                collectedAmount = wardDonations.Sum(GetEffectiveAmountPaid);
             }
             // 3. Calculate for Coordinator (Sum of donations by them AND their assigned Volunteers)
             else if (role == "Coordinator")
@@ -112,14 +127,14 @@ namespace ML.Charity.API.Client.Controllers
                 var teamDonations = allDonations.Where(d => teamUserIds.Contains(d.UserId));
 
                 collectedKits = teamDonations.Sum(d => d.KitCount);
-                collectedAmount = teamDonations.Sum(d => d.TotalAmount);
+                collectedAmount = teamDonations.Sum(GetEffectiveAmountPaid);
             }
             // 4. Calculate for Volunteer
             else
             {
                 var myDonations = await _donationRepository.QueryAsync(d => d.UserId == userId);
                 collectedKits = myDonations.Sum(d => d.KitCount);
-                collectedAmount = myDonations.Sum(d => d.TotalAmount);
+                collectedAmount = myDonations.Sum(GetEffectiveAmountPaid);
             }
 
             int targetKits = currentUser.TargetKits > 0

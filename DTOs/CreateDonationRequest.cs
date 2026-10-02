@@ -19,6 +19,13 @@ namespace ML.Charity.API.Client.DTOs
         /// If false, WhatsApp message will not be sent.
         /// </summary>
         public bool SendWhatsApp { get; set; } = true;
+
+        // Payment Options: PayFull, Book, Advance
+        public string PaymentOption { get; set; } = "PayFull";
+        public double? InitialAmountPaid { get; set; }
+        public string? PaymentMode { get; set; } = "Cash";
+        public string? TransactionReference { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class SendWhatsAppReceiptRequest
@@ -28,6 +35,17 @@ namespace ML.Charity.API.Client.DTOs
         /// </summary>
         [Phone]
         public string? PhoneNumber { get; set; }
+    }
+
+    public class UpdateDonationPaymentRequest
+    {
+        [Required]
+        [Range(0.01, double.MaxValue, ErrorMessage = "Payment amount must be greater than zero.")]
+        public double AmountToPay { get; set; }
+
+        public string? PaymentMode { get; set; } = "Cash";
+        public string? TransactionReference { get; set; }
+        public string? Notes { get; set; }
     }
 
     public class DonationResponse
@@ -44,6 +62,18 @@ namespace ML.Charity.API.Client.DTOs
         public string CollectedByUserId { get; set; } = string.Empty;
         public string CollectedByName { get; set; } = string.Empty;
         public string CollectedByRole { get; set; } = string.Empty;
+
+        // Payment Details
+        public string PaymentOption { get; set; } = "PayFull";
+        public double AmountPaid { get; set; }
+        public double BalanceAmount { get; set; }
+        public string PaymentStatus { get; set; } = "Completed";
+        public string PaymentMode { get; set; } = "Cash";
+        public string TransactionReference { get; set; } = string.Empty;
+        public string Notes { get; set; } = string.Empty;
+        public DateTime? UpdateDate { get; set; }
+        public string UpdatedBy { get; set; } = string.Empty;
+
         public bool WhatsAppSent { get; set; }
         public DateTimeOffset Timestamp { get; set; }
     }
