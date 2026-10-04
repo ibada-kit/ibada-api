@@ -113,10 +113,17 @@ builder.Services.AddSingleton<ITableStorageService<CampaignSettingsEntity>>(sp =
     return new TableStorageService<CampaignSettingsEntity>(client, "CampaignSettings");
 });
 
+builder.Services.AddSingleton<ITableStorageService<ErrorLogEntity>>(sp =>
+{
+    var client = sp.GetRequiredService<TableServiceClient>();
+    return new TableStorageService<ErrorLogEntity>(client, "ErrorLogs");
+});
+
 // -----------------------------------------------------------
 // 3. Application Services
 // -----------------------------------------------------------
 builder.Services.AddScoped<JwtService>();
+builder.Services.AddSingleton<IErrorLoggingService, ErrorLoggingService>();
 builder.Services.AddHttpClient<IWhatsAppService, MetaWhatsAppService>();
 // -----------------------------------------------------------
 // 4. JWT Authentication & Bearer Validation Configuration
@@ -158,19 +165,33 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidAudience = jwtSettings["Audience"],
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero // Eliminates the default 5-minute clock drift allowance
+        ClockSkew = TimeSpan.FromMinutes(2) // 2-minute clock skew allowance helps prevent premature 401s from minor client clock drifts
     };
 
-    // Custom response on unauthorized failure (optional, useful for debugging)
+    // Custom response & Azure Table error logging on authentication and authorization failures
     options.Events = new JwtBearerEvents
     {
-        OnAuthenticationFailed = context =>
+        OnAuthenticationFailed = async context =>
         {
             if (context.Exception is SecurityTokenExpiredException)
             {
                 context.Response.Headers.Append("Token-Expired", "true");
             }
-            return Task.CompletedTask;
+            var errorLogger = context.HttpContext.RequestServices.GetRequiredService<IErrorLoggingService>();
+            await errorLogger.LogAuthenticationFailedAsync(context);
+        },
+        OnChallenge = async context =>
+        {
+            if (!context.HttpContext.Items.ContainsKey("ErrorAlreadyLogged"))
+            {
+                var errorLogger = context.HttpContext.RequestServices.GetRequiredService<IErrorLoggingService>();
+                await errorLogger.LogChallengeAsync(context);
+            }
+        },
+        OnForbidden = async context =>
+        {
+            var errorLogger = context.HttpContext.RequestServices.GetRequiredService<IErrorLoggingService>();
+            await errorLogger.LogForbiddenAsync(context);
         }
     };
 });
@@ -210,6 +231,9 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 app.UseCors();
+
+// Centralized Error Handling & Azure Table Storage Logging
+app.UseMiddleware<ML.Charity.API.Client.Middleware.ErrorHandlingMiddleware>();
 
 // CRITICAL: Authentication MUST be placed before Authorization
 app.UseAuthentication();
