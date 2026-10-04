@@ -234,6 +234,19 @@ namespace ML.Charity.API.Client.Controllers
             double balanceAmount = d.BalanceAmount;
             string paymentMode = !string.IsNullOrEmpty(d.PaymentMode) ? d.PaymentMode : "Cash";
 
+            int genKits = d.GeneralKitCount;
+            int stuKits = d.StudentKitCount;
+            if (genKits == 0 && stuKits == 0 && d.KitCount > 0)
+            {
+                if (string.Equals(d.KitStyle, "Student", StringComparison.OrdinalIgnoreCase))
+                    stuKits = d.KitCount;
+                else
+                    genKits = d.KitCount;
+            }
+            string effectiveKitStyle = !string.IsNullOrEmpty(d.KitStyle) 
+                ? d.KitStyle 
+                : (genKits > 0 && stuKits > 0 ? "Mixed" : (stuKits > 0 ? "Student" : "General"));
+
             return new DonationResponse
             {
                 DonationId = d.DonationId,
@@ -242,6 +255,9 @@ namespace ML.Charity.API.Client.Controllers
                 DonorName = d.DonorName,
                 WhatsAppNumber = d.WhatsAppNumber,
                 KitCount = d.KitCount,
+                GeneralKitCount = genKits,
+                StudentKitCount = stuKits,
+                KitStyle = effectiveKitStyle,
                 TotalAmount = d.TotalAmount,
                 Panchayath = d.PartitionKey,
                 WardNumber = d.WardNumber,
@@ -286,6 +302,19 @@ namespace ML.Charity.API.Client.Controllers
                     d.BalanceAmount = 0.0;
                     d.PaymentMode = "Cash";
                 }
+                if (d.GeneralKitCount == 0 && d.StudentKitCount == 0 && d.KitCount > 0)
+                {
+                    if (string.Equals(d.KitStyle, "Student", StringComparison.OrdinalIgnoreCase))
+                        d.StudentKitCount = d.KitCount;
+                    else
+                        d.GeneralKitCount = d.KitCount;
+                }
+                if (string.IsNullOrEmpty(d.KitStyle))
+                {
+                    d.KitStyle = (d.StudentKitCount > 0 && d.GeneralKitCount > 0)
+                        ? "Mixed"
+                        : (d.StudentKitCount > 0 ? "Student" : "General");
+                }
             }
             return Ok(list);
         }
@@ -314,6 +343,19 @@ namespace ML.Charity.API.Client.Controllers
                 donation.AmountPaid = donation.TotalAmount;
                 donation.BalanceAmount = 0.0;
                 donation.PaymentMode = "Cash";
+            }
+            if (donation.GeneralKitCount == 0 && donation.StudentKitCount == 0 && donation.KitCount > 0)
+            {
+                if (string.Equals(donation.KitStyle, "Student", StringComparison.OrdinalIgnoreCase))
+                    donation.StudentKitCount = donation.KitCount;
+                else
+                    donation.GeneralKitCount = donation.KitCount;
+            }
+            if (string.IsNullOrEmpty(donation.KitStyle))
+            {
+                donation.KitStyle = (donation.StudentKitCount > 0 && donation.GeneralKitCount > 0)
+                    ? "Mixed"
+                    : (donation.StudentKitCount > 0 ? "Student" : "General");
             }
 
             return Ok(donation);
@@ -351,8 +393,40 @@ namespace ML.Charity.API.Client.Controllers
             }
 
             // Calculate exact amount securely on the server using dynamic kit price from Azure Table Storage
+            // Determine General, Student, and Total Kit Counts
+            int generalKits = request.GeneralKitCount;
+            int studentKits = request.StudentKitCount;
+            int totalKits = request.KitCount;
+
+            if (generalKits > 0 || studentKits > 0)
+            {
+                totalKits = generalKits + studentKits;
+            }
+            else if (totalKits > 0)
+            {
+                if (string.Equals(request.KitStyle, "Student", StringComparison.OrdinalIgnoreCase))
+                {
+                    studentKits = totalKits;
+                    generalKits = 0;
+                }
+                else
+                {
+                    generalKits = totalKits;
+                    studentKits = 0;
+                }
+            }
+
+            if (totalKits < 1)
+            {
+                return BadRequest(new { message = "Donation must contain at least 1 kit (General or Student Ibada Kit)." });
+            }
+
+            string kitStyleStr = (generalKits > 0 && studentKits > 0)
+                ? nameof(KitStyle.Mixed)
+                : (studentKits > 0 ? nameof(KitStyle.Student) : nameof(KitStyle.General));
+
             double currentKitPrice = await GetCurrentKitPriceAsync();
-            double calculatedAmount = request.KitCount * currentKitPrice;
+            double calculatedAmount = totalKits * currentKitPrice;
 
             // Process Payment Option: PayFull, Book, Advance
             double amountPaid;
@@ -425,7 +499,10 @@ namespace ML.Charity.API.Client.Controllers
                 WardNumber = wardNumber,
                 DonorName = request.DonorName,
                 WhatsAppNumber = request.WhatsAppNumber ?? string.Empty,
-                KitCount = request.KitCount,
+                KitCount = totalKits,
+                GeneralKitCount = generalKits,
+                StudentKitCount = studentKits,
+                KitStyle = kitStyleStr,
                 TotalAmount = calculatedAmount,
                 PaymentOption = paymentOption,
                 AmountPaid = amountPaid,
@@ -448,12 +525,19 @@ namespace ML.Charity.API.Client.Controllers
             {
                 try
                 {
+                    string kitsDesc = (studentKits > 0 && generalKits > 0)
+                        ? $"{studentKits} Student Kit{(studentKits > 1 ? "s" : "")}, {generalKits} General Kit{(generalKits > 1 ? "s" : "")}"
+                        : (studentKits > 0
+                            ? $"{totalKits} Student Ibada Kit{(totalKits > 1 ? "s" : "")}"
+                            : $"{totalKits} General Ibada Kit{(totalKits > 1 ? "s" : "")}");
+
                     whatsAppSent = await _whatsappService.SendReceiptAsync(
                         phoneNumber: request.WhatsAppNumber,
                         donorName: request.DonorName,
-                        kits: request.KitCount,
+                        kits: totalKits,
                         amount: amountPaid > 0 ? amountPaid : calculatedAmount,
-                        receiptToken: receiptToken
+                        receiptToken: receiptToken,
+                        kitsDescription: kitsDesc
                     );
                 }
                 catch (Exception ex)
@@ -469,7 +553,10 @@ namespace ML.Charity.API.Client.Controllers
                 SerialNumber = serialNumber,
                 DonorName = request.DonorName,
                 WhatsAppNumber = request.WhatsAppNumber ?? string.Empty,
-                KitCount = request.KitCount,
+                KitCount = totalKits,
+                GeneralKitCount = generalKits,
+                StudentKitCount = studentKits,
+                KitStyle = kitStyleStr,
                 TotalAmount = calculatedAmount,
                 Panchayath = panchayath,
                 WardNumber = wardNumber,
@@ -524,6 +611,22 @@ namespace ML.Charity.API.Client.Controllers
                 ? donation.AmountPaid
                 : donation.TotalAmount;
 
+            int onDemandGenKits = donation.GeneralKitCount;
+            int onDemandStuKits = donation.StudentKitCount;
+            if (onDemandGenKits == 0 && onDemandStuKits == 0 && donation.KitCount > 0)
+            {
+                if (string.Equals(donation.KitStyle, "Student", StringComparison.OrdinalIgnoreCase))
+                    onDemandStuKits = donation.KitCount;
+                else
+                    onDemandGenKits = donation.KitCount;
+            }
+
+            string onDemandKitsDesc = (onDemandStuKits > 0 && onDemandGenKits > 0)
+                ? $"{onDemandStuKits} Student Kit{(onDemandStuKits > 1 ? "s" : "")}, {onDemandGenKits} General Kit{(onDemandGenKits > 1 ? "s" : "")}"
+                : (onDemandStuKits > 0
+                    ? $"{donation.KitCount} Student Ibada Kit{(donation.KitCount > 1 ? "s" : "")}"
+                    : $"{donation.KitCount} General Ibada Kit{(donation.KitCount > 1 ? "s" : "")}");
+
             try
             {
                 var success = await _whatsappService.SendReceiptAsync(
@@ -531,7 +634,8 @@ namespace ML.Charity.API.Client.Controllers
                     donorName: donation.DonorName,
                     kits: donation.KitCount,
                     amount: sendAmount,
-                    receiptToken: donation.RowKey
+                    receiptToken: donation.RowKey,
+                    kitsDescription: onDemandKitsDesc
                 );
 
                 return Ok(new

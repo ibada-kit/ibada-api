@@ -10,9 +10,12 @@ namespace ML.Charity.API.Client.DTOs
         [Phone] // Valid phone number format
         public string WhatsAppNumber { get; set; } = string.Empty;
 
-        [Required]
-        [Range(1, 1000)] // Must donate at least 1 kit
+        [Range(0, 1000)]
         public int KitCount { get; set; }
+
+        public int GeneralKitCount { get; set; }
+        public int StudentKitCount { get; set; }
+        public string? KitStyle { get; set; }
 
         /// <summary>
         /// Option to send receipt via WhatsApp. Defaults to true.
@@ -56,6 +59,9 @@ namespace ML.Charity.API.Client.DTOs
         public string DonorName { get; set; } = string.Empty;
         public string WhatsAppNumber { get; set; } = string.Empty;
         public int KitCount { get; set; }
+        public int GeneralKitCount { get; set; }
+        public int StudentKitCount { get; set; }
+        public string KitStyle { get; set; } = "General";
         public double TotalAmount { get; set; }
         public string Panchayath { get; set; } = string.Empty;
         public int WardNumber { get; set; }

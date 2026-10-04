@@ -35,7 +35,12 @@ public class MetaWhatsAppService : IWhatsAppService
         return Task.CompletedTask;
     }
 
-    public async Task<bool> SendReceiptAsync(string phoneNumber, string donorName, int kits, double amount, string receiptToken)
+    public Task<bool> SendReceiptAsync(string phoneNumber, string donorName, int kits, double amount, string receiptToken)
+    {
+        return SendReceiptAsync(phoneNumber, donorName, kits, amount, receiptToken, null);
+    }
+
+    public async Task<bool> SendReceiptAsync(string phoneNumber, string donorName, int kits, double amount, string receiptToken, string? kitsDescription)
     {
         if (string.IsNullOrWhiteSpace(_phoneNumberId) || string.IsNullOrWhiteSpace(_accessToken))
         {
@@ -67,7 +72,9 @@ public class MetaWhatsAppService : IWhatsAppService
         // May your contribution be accepted and rewarded abundantly.
         var safeDonorName = string.IsNullOrWhiteSpace(donorName) ? "Valued Donor" : donorName.Trim();
         var safeReceiptToken = string.IsNullOrWhiteSpace(receiptToken) ? "N/A" : receiptToken.Trim();
-        var safeKitCount = kits > 0 ? kits.ToString() : "1";
+        var safeKitCount = !string.IsNullOrWhiteSpace(kitsDescription)
+            ? kitsDescription.Trim()
+            : (kits > 0 ? kits.ToString() : "1");
         var safeAmount = amount.ToString("0.00"); // ₹ symbol is hardcoded in template, so pass numeric value only
 
         // 1. Mandatory Body Component matching the 4 template parameters

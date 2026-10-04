@@ -21,6 +21,9 @@ namespace ML.Charity.API.Client.Models
         public string DonorName { get; set; } = string.Empty;
         public string WhatsAppNumber { get; set; } = string.Empty;
         public int KitCount { get; set; }
+        public int GeneralKitCount { get; set; }
+        public int StudentKitCount { get; set; }
+        public string KitStyle { get; set; } = nameof(Models.KitStyle.General);
         public double TotalAmount { get; set; }
         public DateTime TransactionDate { get; set; } = DateTime.UtcNow;
 
