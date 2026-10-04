@@ -219,7 +219,7 @@ namespace ML.Charity.API.Client.Controllers
                 }
             }
 
-            // 1. Resolve item(s) from catalog and compute totals
+            // 1. Resolve item(s) from catalog or lump-sum cash donation and compute totals
             var itemDetails = new List<SponsorshipItemDetailDto>();
             double totalAmount = 0.0;
             int totalQuantity = 0;
@@ -227,7 +227,40 @@ namespace ML.Charity.API.Client.Controllers
             string combinedItemName = string.Empty;
             double avgItemPrice = 0.0;
 
-            if (request.Items != null && request.Items.Count > 0)
+            bool isCashSponsorship = string.Equals(request.SponsorshipType, "Cash", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(request.ItemId, "ITEM-CASH", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(request.ItemId, "CASH", StringComparison.OrdinalIgnoreCase)
+                || (request.Amount.HasValue && request.Amount.Value > 0 && (request.Items == null || request.Items.Count == 0) && string.IsNullOrWhiteSpace(request.ItemId));
+
+            if (isCashSponsorship)
+            {
+                double cashAmount = request.Amount ?? 0.0;
+                if (cashAmount <= 0 && request.InitialAmountPaid.HasValue && request.InitialAmountPaid.Value > 0)
+                {
+                    cashAmount = request.InitialAmountPaid.Value;
+                }
+
+                if (cashAmount <= 0)
+                {
+                    return BadRequest(new { message = "Donation amount must be greater than zero for cash sponsorship." });
+                }
+
+                primaryItemId = "ITEM-CASH";
+                combinedItemName = "General Cash Sponsorship";
+                avgItemPrice = cashAmount;
+                totalQuantity = 1;
+                totalAmount = cashAmount;
+
+                itemDetails.Add(new SponsorshipItemDetailDto
+                {
+                    ItemId = "ITEM-CASH",
+                    Name = "General Cash Sponsorship",
+                    UnitPrice = cashAmount,
+                    Quantity = 1,
+                    Subtotal = cashAmount
+                });
+            }
+            else if (request.Items != null && request.Items.Count > 0)
             {
                 var allCatalogItems = (await _itemRepository.QueryEntitiesAsync(null)).ToList();
                 foreach (var sel in request.Items)
@@ -260,6 +293,12 @@ namespace ML.Charity.API.Client.Controllers
                     return BadRequest(new { message = "At least one sponsorship item with quantity > 0 is required." });
                 }
 
+                // Scenario 3: Enforce standard validation, ensuring the total price of selected items exactly matches the entered donation amount
+                if (request.Amount.HasValue && request.Amount.Value > 0 && Math.Abs(request.Amount.Value - totalAmount) > 0.01)
+                {
+                    return BadRequest(new { message = $"The total price of selected items (₹{totalAmount:N0}) must exactly match the entered donation amount (₹{request.Amount.Value:N0})." });
+                }
+
                 primaryItemId = itemDetails[0].ItemId;
                 combinedItemName = itemDetails.Count == 1 
                     ? itemDetails[0].Name 
@@ -290,6 +329,12 @@ namespace ML.Charity.API.Client.Controllers
                 avgItemPrice = item.ItemPrice;
                 totalQuantity = request.Quantity > 0 ? request.Quantity : 1;
                 totalAmount = avgItemPrice * totalQuantity;
+
+                if (request.Amount.HasValue && request.Amount.Value > 0 && Math.Abs(request.Amount.Value - totalAmount) > 0.01)
+                {
+                    return BadRequest(new { message = $"The total price of selected items (₹{totalAmount:N0}) must exactly match the entered donation amount (₹{request.Amount.Value:N0})." });
+                }
+
                 itemDetails.Add(new SponsorshipItemDetailDto
                 {
                     ItemId = item.ItemId,

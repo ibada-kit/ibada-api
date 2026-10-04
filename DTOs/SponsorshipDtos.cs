@@ -82,6 +82,15 @@ namespace ML.Charity.API.Client.DTOs
         [Phone(ErrorMessage = "Invalid mobile number format.")]
         public string MobileNumber { get; set; } = string.Empty;
 
+        // Sponsorship mode: 'Cash' (Lump-sum flat donation) or 'Kit' (Itemized selection)
+        public string? SponsorshipType { get; set; }
+
+        /// <summary>
+        /// Explicit total amount entered (required for 'Cash' lump-sum mode, and used for validation in 'Kit' mode).
+        /// </summary>
+        [Range(0.0, 100000000.0, ErrorMessage = "Amount cannot be negative.")]
+        public double? Amount { get; set; }
+
         // For backward-compatibility or single-item calls
         public string? ItemId { get; set; }
         public int Quantity { get; set; } = 1;
