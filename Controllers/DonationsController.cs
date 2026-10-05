@@ -277,6 +277,139 @@ namespace ML.Charity.API.Client.Controllers
             };
         }
 
+        /// <summary>
+        /// Returns a privacy-safe list of unique donors who have donated under the caller's assigned ward.
+        /// Excludes phone numbers, amounts, and sensitive details (only name and kit count are returned).
+        /// Sorted alphabetically by name ascending, with optional search by name and 10-per-page pagination.
+        /// Rule: Ward 2 donors will never be seen under Ward 1.
+        /// </summary>
+        [HttpGet("ward-donors")]
+        [HttpGet("donors")]
+        public async Task<IActionResult> GetWardDonors(
+            [FromQuery] string? search = null,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 10,
+            [FromQuery] int? wardNumber = null)
+        {
+            var userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                      ?? User.FindFirst("sub")?.Value
+                      ?? User.FindFirst("UserId")?.Value
+                      ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var role = User.FindFirst(ClaimTypes.Role)?.Value
+                    ?? User.FindFirst("role")?.Value ?? "Volunteer";
+            var wardString = User.FindFirst("WardNumber")?.Value;
+
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized(new { message = "Invalid user token. Missing required claims." });
+            }
+
+            int callerWard = 0;
+            if (_userRepository != null)
+            {
+                var users = await _userRepository.QueryAsync(u => u.UserId == userId || u.RowKey == userId);
+                var currentUser = users.FirstOrDefault();
+                if (currentUser != null && currentUser.WardNumber > 0)
+                {
+                    callerWard = currentUser.WardNumber;
+                }
+            }
+
+            if (callerWard == 0 && !string.IsNullOrEmpty(wardString) && int.TryParse(wardString, out int parsedWard))
+            {
+                callerWard = parsedWard;
+            }
+
+            int targetWard;
+            if (role == "Admin")
+            {
+                if (wardNumber.HasValue && wardNumber.Value > 0)
+                {
+                    targetWard = wardNumber.Value;
+                }
+                else if (callerWard > 0)
+                {
+                    targetWard = callerWard;
+                }
+                else
+                {
+                    return BadRequest(new { message = "WardNumber query parameter is required for Admin when no default ward is assigned." });
+                }
+            }
+            else
+            {
+                if (callerWard <= 0)
+                {
+                    return BadRequest(new { message = "User is not assigned to any ward." });
+                }
+
+                // Ensure strict ward isolation: non-admins cannot query wards other than their assigned ward
+                if (wardNumber.HasValue && wardNumber.Value != callerWard)
+                {
+                    return StatusCode(403, new { message = "Access denied. You can only view donors for your assigned ward." });
+                }
+
+                targetWard = callerWard;
+            }
+
+            // Fetch donations strictly filtered by target ward
+            IEnumerable<DonationEntity> wardDonations;
+            try
+            {
+                wardDonations = await _donationRepository.QueryAsync(d => d.WardNumber == targetWard);
+            }
+            catch
+            {
+                wardDonations = null!;
+            }
+
+            if (wardDonations == null)
+            {
+                var allDonations = await _donationRepository.QueryEntitiesAsync(null);
+                wardDonations = allDonations?.Where(d => d.WardNumber == targetWard) ?? Enumerable.Empty<DonationEntity>();
+            }
+
+            // Isolate and aggregate unique donors: only DonorName and KitCount
+            var donorQuery = wardDonations
+                .Where(d => !string.IsNullOrWhiteSpace(d.DonorName))
+                .GroupBy(d => d.DonorName.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => new WardDonorDto
+                {
+                    DonorName = g.First().DonorName.Trim(),
+                    KitCount = g.Sum(d => d.KitCount)
+                });
+
+            // Option to search by name (case-insensitive)
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                string searchTrimmed = search.Trim();
+                donorQuery = donorQuery.Where(d => d.DonorName.Contains(searchTrimmed, StringComparison.OrdinalIgnoreCase));
+            }
+
+            // Order by name ascending
+            var orderedDonors = donorQuery.OrderBy(d => d.DonorName, StringComparer.OrdinalIgnoreCase).ToList();
+
+            // Pagination (default page 1, 10 per page)
+            if (pageNumber < 1) pageNumber = 1;
+            if (pageSize < 1) pageSize = 10;
+
+            int totalDonors = orderedDonors.Count;
+            int totalPages = totalDonors > 0 ? (int)Math.Ceiling((double)totalDonors / pageSize) : 0;
+            var pagedDonors = orderedDonors.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
+
+            var response = new WardDonorsResponse
+            {
+                WardNumber = targetWard,
+                TotalDonors = totalDonors,
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalPages = totalPages,
+                Donors = pagedDonors
+            };
+
+            return Ok(response);
+        }
+
         [HttpGet("my-donations")]
         public async Task<IActionResult> GetMyDonations()
         {
