@@ -22,4 +22,32 @@ namespace ML.Charity.API.Client.DTOs
         public List<LeaderboardEntry> TopWards { get; set; } = new();
         public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
     }
+
+    /// <summary>
+    /// DTO for public anonymous wards display.
+    /// Strictly contains only kit counts and counts of sponsors/donors.
+    /// Excludes financial amounts, pending balances, and currency figures.
+    /// </summary>
+    public class PublicWardRankDto
+    {
+        public int Position { get; set; }
+        public int WardNumber { get; set; }
+        public string WardName { get; set; } = string.Empty;
+        public string WardNameMalayalam { get; set; } = string.Empty;
+        public string WardLeadName { get; set; } = string.Empty;
+        public int TotalKitsCollected { get; set; }
+        public int SponsorsCount { get; set; }
+        public int VolunteerCount { get; set; }
+        public int TargetKits { get; set; }
+        public double AchievementPercentage { get; set; }
+        public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
+    }
+
+    public class PublicWardsLeaderboardResponse
+    {
+        public int TotalKitsCollected { get; set; }
+        public int TotalSponsors { get; set; }
+        public List<PublicWardRankDto> Wards { get; set; } = new();
+        public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+    }
 }

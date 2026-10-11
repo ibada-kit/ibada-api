@@ -8,18 +8,56 @@ namespace ML.Charity.API.Client.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-[Authorize] // All logged-in users can view the leaderboard
 public class LeaderboardsController : ControllerBase
 {
+    private const string DEFAULT_PANCHAYATH = "Madavoor";
     private readonly ITableStorageService<DonationEntity> _donationRepository;
     private readonly ITableStorageService<UserEntity> _userRepository;
+    private readonly ITableStorageService<WardEntity>? _wardRepository;
+    private readonly ITableStorageService<SponsorshipEntity>? _sponsorshipRepository;
+
+    private static readonly Dictionary<int, string> DefaultMadavoorWardNames = new()
+    {
+        { 1, "Ankathayi" },
+        { 2, "Eravannur North" },
+        { 3, "Eravannur South" },
+        { 4, "Nariyachal" },
+        { 5, "Pullaloor" },
+        { 6, "Eranhukunnu" },
+        { 7, "Rampoyil" },
+        { 8, "Madavoor" },
+        { 9, "Madavoormukku" },
+        { 10, "Paimbalassery" },
+        { 11, "Kottakkavayal" },
+        { 12, "Arambram" }
+    };
+
+    private static readonly Dictionary<int, string> DefaultMadavoorWardMalayalamNames = new()
+    {
+        { 1, "അങ്കത്തായി" },
+        { 2, "ഇരവണ്ണൂർ നോർത്ത്" },
+        { 3, "ഇരവണ്ണൂർ സൗത്ത്" },
+        { 4, "നരിയച്ചാൽ" },
+        { 5, "പുല്ലാളൂർ" },
+        { 6, "എരഞ്ഞിക്കുന്ന്" },
+        { 7, "റാംപൊയിൽ" },
+        { 8, "മടവൂർ" },
+        { 9, "മടവൂർമുക്ക്" },
+        { 10, "പൈമ്പാലശ്ശേരി" },
+        { 11, "കോട്ടക്കവയൽ" },
+        { 12, "ആരംബ്രം" }
+    };
 
     public LeaderboardsController(
         ITableStorageService<DonationEntity> donationRepository,
-        ITableStorageService<UserEntity> userRepository)
+        ITableStorageService<UserEntity> userRepository,
+        ITableStorageService<WardEntity>? wardRepository = null,
+        ITableStorageService<SponsorshipEntity>? sponsorshipRepository = null)
     {
         _donationRepository = donationRepository;
         _userRepository = userRepository;
+        _wardRepository = wardRepository;
+        _sponsorshipRepository = sponsorshipRepository;
     }
 
     private static double GetEffectiveAmountPaid(DonationEntity d)
@@ -36,6 +74,7 @@ public class LeaderboardsController : ControllerBase
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> GetLeaderboard()
     {
         // 1. Fetch all active donations and users
@@ -179,6 +218,181 @@ public class LeaderboardsController : ControllerBase
         {
             TopVolunteers = topVolunteers.Take(100).ToList(),
             TopWards = topWards,
+            GeneratedAt = DateTime.UtcNow
+        });
+    }
+
+    /// <summary>
+    /// Dedicated public leaderboard for Wards display.
+    /// Strictly Anonymous access, displays ONLY kit counts and sponsors count.
+    /// No financial amounts, balances, or currency figures are returned.
+    /// </summary>
+    [HttpGet("public-wards")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetPublicWardsLeaderboard()
+    {
+        // 1. Fetch all active donations, users, wards, and sponsorships
+        var allDonations = (await _donationRepository.QueryEntitiesAsync(null))
+            ?? (await _donationRepository.QueryAsync(d => true))
+            ?? new List<DonationEntity>();
+
+        var allUsers = (await _userRepository.QueryEntitiesAsync(null))
+            ?? (await _userRepository.QueryAsync(u => true))
+            ?? new List<UserEntity>();
+
+        var userMap = allUsers
+            .Where(u => !string.IsNullOrEmpty(u.UserId))
+            .GroupBy(u => u.UserId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        List<WardEntity> allWards = new();
+        if (_wardRepository != null)
+        {
+            try
+            {
+                allWards = (await _wardRepository.QueryEntitiesByPartitionAsync(DEFAULT_PANCHAYATH)) ?? new();
+            }
+            catch
+            {
+                // Fall back gracefully
+            }
+        }
+        var wardMap = allWards.GroupBy(w => w.WardNumber).ToDictionary(g => g.Key, g => g.First());
+
+        List<SponsorshipEntity> allSponsorships = new();
+        if (_sponsorshipRepository != null)
+        {
+            try
+            {
+                allSponsorships = (await _sponsorshipRepository.QueryEntitiesAsync(null)) ?? new();
+            }
+            catch
+            {
+                // Fall back gracefully
+            }
+        }
+
+        // 2. Identify Ward Committee Lead and Volunteers per ward
+        var wardUsers = allUsers.Where(u => u.WardNumber > 0).GroupBy(u => u.WardNumber).ToDictionary(g => g.Key, g => g.ToList());
+
+        // 3. Aggregate General Donations per Ward
+        var donationsByWard = allDonations
+            .Select(d => new
+            {
+                Ward = d.WardNumber > 0 ? d.WardNumber : (userMap.TryGetValue(d.UserId, out var u) ? u.WardNumber : 0),
+                d.KitCount,
+                Donor = d.DonorName?.Trim() ?? string.Empty
+            })
+            .Where(x => x.Ward > 0)
+            .GroupBy(x => x.Ward)
+            .ToDictionary(g => g.Key, g => new
+            {
+                TotalKits = g.Sum(x => x.KitCount),
+                UniqueDonors = g.Select(x => x.Donor).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().Count(),
+                DonationTransactions = g.Count()
+            });
+
+        // 4. Aggregate Sponsorships per Ward
+        var sponsorshipsByWard = allSponsorships
+            .Select(s => new
+            {
+                Ward = s.WardNumber > 0 ? s.WardNumber : (userMap.TryGetValue(s.CollectedByUserId, out var u) ? u.WardNumber : 0),
+                Kits = s.Quantity,
+                Donor = s.DonorName?.Trim() ?? string.Empty
+            })
+            .Where(x => x.Ward > 0)
+            .GroupBy(x => x.Ward)
+            .ToDictionary(g => g.Key, g => new
+            {
+                TotalKits = g.Sum(x => x.Kits),
+                UniqueSponsors = g.Select(x => x.Donor).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().Count(),
+                SponsorshipTransactions = g.Count()
+            });
+
+        // 5. Build rank list for standard 12 wards (and any additional recorded wards)
+        var wardNumbers = Enumerable.Range(1, 12)
+            .Union(donationsByWard.Keys)
+            .Union(sponsorshipsByWard.Keys)
+            .Where(w => w > 0)
+            .Distinct()
+            .OrderBy(w => w)
+            .ToList();
+
+        var publicWards = new List<PublicWardRankDto>();
+
+        foreach (var wardNum in wardNumbers)
+        {
+            wardUsers.TryGetValue(wardNum, out var members);
+            members ??= new List<UserEntity>();
+
+            // Authoritative Ward Lead: WardCommittee role first, then Coordinator
+            var lead = members.FirstOrDefault(u => u.Role == "WardCommittee")
+                    ?? members.FirstOrDefault(u => u.Role == "Coordinator");
+            var leadName = !string.IsNullOrWhiteSpace(lead?.FullName) ? lead.FullName : "Ward Committee Lead";
+
+            int volunteerCount = members.Count(u => u.Role == "Volunteer");
+
+            // Targets: Derived from Ward Committee Lead (to avoid double-counting)
+            int targetKits = lead?.TargetKits > 0 
+                ? lead.TargetKits 
+                : members.Where(u => u.Role == "Coordinator").Sum(u => u.TargetKits);
+            if (targetKits <= 0)
+            {
+                targetKits = members.Where(u => u.Role == "Volunteer").Sum(u => u.TargetKits);
+            }
+
+            donationsByWard.TryGetValue(wardNum, out var donStat);
+            sponsorshipsByWard.TryGetValue(wardNum, out var sponStat);
+
+            int totalKits = (donStat?.TotalKits ?? 0) + (sponStat?.TotalKits ?? 0);
+            
+            // Count unique sponsors/donors (or fallback to transactions count)
+            int donSponsors = donStat != null ? Math.Max(donStat.UniqueDonors, donStat.DonationTransactions) : 0;
+            int sponSponsors = sponStat != null ? Math.Max(sponStat.UniqueSponsors, sponStat.SponsorshipTransactions) : 0;
+            int totalSponsors = donSponsors + sponSponsors;
+
+            // Ward authentic name
+            string englishName = wardMap.TryGetValue(wardNum, out var wEnt) && !string.IsNullOrWhiteSpace(wEnt.WardName) && !wEnt.WardName.StartsWith("Ward ")
+                ? wEnt.WardName
+                : (DefaultMadavoorWardNames.TryGetValue(wardNum, out var defEn) ? defEn : $"Ward {wardNum}");
+
+            string malayalamName = DefaultMadavoorWardMalayalamNames.TryGetValue(wardNum, out var defMl)
+                ? defMl
+                : englishName;
+
+            double pct = targetKits > 0 ? Math.Round((double)totalKits / targetKits * 100, 1) : 0;
+
+            publicWards.Add(new PublicWardRankDto
+            {
+                WardNumber = wardNum,
+                WardName = englishName,
+                WardNameMalayalam = malayalamName,
+                WardLeadName = leadName,
+                TotalKitsCollected = totalKits,
+                SponsorsCount = totalSponsors,
+                VolunteerCount = volunteerCount,
+                TargetKits = targetKits,
+                AchievementPercentage = pct
+            });
+        }
+
+        // Rank strictly based on total kit sponsored / collected descending
+        var rankedWards = publicWards
+            .OrderByDescending(w => w.TotalKitsCollected)
+            .ThenBy(w => w.WardNumber)
+            .Select((w, idx) =>
+            {
+                w.Position = idx + 1;
+                w.RankBadge = AssignBadge(idx + 1);
+                return w;
+            })
+            .ToList();
+
+        return Ok(new PublicWardsLeaderboardResponse
+        {
+            TotalKitsCollected = rankedWards.Sum(w => w.TotalKitsCollected),
+            TotalSponsors = rankedWards.Sum(w => w.SponsorsCount),
+            Wards = rankedWards,
             GeneratedAt = DateTime.UtcNow
         });
     }
