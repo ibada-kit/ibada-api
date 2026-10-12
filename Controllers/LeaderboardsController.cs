@@ -29,24 +29,16 @@ public class LeaderboardsController : ControllerBase
         { 9, "Madavoormukku" },
         { 10, "Paimbalassery" },
         { 11, "Kottakkavayal" },
-        { 12, "Arambram" }
+        { 12, "Arambram" },
+        { 13, "Chakkalakkal" },
+        { 14, "Arambram West" },
+        { 15, "Pullikkoth" },
+        { 16, "Arankilthazham" },
+        { 17, "Muttanchery" },
+        { 18, "Pullorammal" },
+        { 19, "Chathanarambu" }
     };
 
-    private static readonly Dictionary<int, string> DefaultMadavoorWardMalayalamNames = new()
-    {
-        { 1, "അങ്കത്തായി" },
-        { 2, "ഇരവണ്ണൂർ നോർത്ത്" },
-        { 3, "ഇരവണ്ണൂർ സൗത്ത്" },
-        { 4, "നരിയച്ചാൽ" },
-        { 5, "പുല്ലാളൂർ" },
-        { 6, "എരഞ്ഞിക്കുന്ന്" },
-        { 7, "റാംപൊയിൽ" },
-        { 8, "മടവൂർ" },
-        { 9, "മടവൂർമുക്ക്" },
-        { 10, "പൈമ്പാലശ്ശേരി" },
-        { 11, "കോട്ടക്കവയൽ" },
-        { 12, "ആരംബ്രം" }
-    };
 
     public LeaderboardsController(
         ITableStorageService<DonationEntity> donationRepository,
@@ -229,7 +221,10 @@ public class LeaderboardsController : ControllerBase
     /// </summary>
     [HttpGet("public-wards")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetPublicWardsLeaderboard()
+    public async Task<IActionResult> GetPublicWardsLeaderboard(
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        [FromQuery] string? period = null)
     {
         // 1. Fetch all active donations, users, wards, and sponsorships
         var allDonations = (await _donationRepository.QueryEntitiesAsync(null))
@@ -272,11 +267,99 @@ public class LeaderboardsController : ControllerBase
             }
         }
 
-        // 2. Identify Ward Committee Lead and Volunteers per ward
+        // 2. Identify the most recent transaction date across all donations
+        DateTime? lastActiveTransactionDate = allDonations
+            .Select(d => (DateTime?)(d.TransactionDate != default ? d.TransactionDate : d.Timestamp?.UtcDateTime))
+            .Where(dt => dt.HasValue)
+            .OrderByDescending(dt => dt!.Value)
+            .FirstOrDefault();
+
+        DateTime? filterFrom = null;
+        DateTime? filterTo = null;
+        bool isFallback = false;
+        string effectivePeriod = string.IsNullOrWhiteSpace(period) 
+            ? (fromDate.HasValue || toDate.HasValue ? "custom" : "all") 
+            : period.Trim().ToLowerInvariant();
+
+        if (effectivePeriod == "today" || effectivePeriod == "current-day")
+        {
+            var todayUtc = DateTime.UtcNow.Date;
+            var todayEndUtc = todayUtc.AddDays(1).AddTicks(-1);
+            bool hasToday = allDonations.Any(d =>
+            {
+                var dt = d.TransactionDate != default ? d.TransactionDate : (d.Timestamp?.UtcDateTime ?? DateTime.MinValue);
+                return dt >= todayUtc && dt <= todayEndUtc;
+            });
+
+            if (hasToday)
+            {
+                filterFrom = todayUtc;
+                filterTo = todayEndUtc;
+            }
+            else if (lastActiveTransactionDate.HasValue)
+            {
+                // Fall back to whole full 24h day of the last transaction!
+                filterFrom = lastActiveTransactionDate.Value.Date;
+                filterTo = filterFrom.Value.AddDays(1).AddTicks(-1);
+                isFallback = true;
+            }
+            else
+            {
+                filterFrom = todayUtc;
+                filterTo = todayEndUtc;
+            }
+        }
+        else if (effectivePeriod == "week" || effectivePeriod == "weekly" || effectivePeriod == "this-week")
+        {
+            var refDate = lastActiveTransactionDate ?? DateTime.UtcNow;
+            filterTo = refDate.Date.AddDays(1).AddTicks(-1);
+            filterFrom = refDate.Date.AddDays(-6);
+        }
+        else if (fromDate.HasValue || toDate.HasValue)
+        {
+            effectivePeriod = "custom";
+            filterFrom = fromDate?.Date;
+            filterTo = toDate?.Date.AddDays(1).AddTicks(-1);
+            if (filterFrom.HasValue && !filterTo.HasValue)
+            {
+                filterTo = filterFrom.Value.AddDays(1).AddTicks(-1);
+            }
+            else if (!filterFrom.HasValue && filterTo.HasValue)
+            {
+                filterFrom = filterTo.Value.Date;
+            }
+        }
+
+        // Apply date filtering to donations and sponsorships for ranking
+        var donationsForRanking = allDonations;
+        if (filterFrom.HasValue || filterTo.HasValue)
+        {
+            donationsForRanking = allDonations.Where(d =>
+            {
+                var dt = d.TransactionDate != default ? d.TransactionDate : (d.Timestamp?.UtcDateTime ?? DateTime.MinValue);
+                if (filterFrom.HasValue && dt < filterFrom.Value) return false;
+                if (filterTo.HasValue && dt > filterTo.Value) return false;
+                return true;
+            }).ToList();
+        }
+
+        var sponsorshipsForRanking = allSponsorships;
+        if (filterFrom.HasValue || filterTo.HasValue)
+        {
+            sponsorshipsForRanking = allSponsorships.Where(s =>
+            {
+                var dt = s.CreatedDate != default ? s.CreatedDate : (s.Timestamp?.UtcDateTime ?? DateTime.MinValue);
+                if (filterFrom.HasValue && dt < filterFrom.Value) return false;
+                if (filterTo.HasValue && dt > filterTo.Value) return false;
+                return true;
+            }).ToList();
+        }
+
+        // 3. Identify Ward Committee Lead and Volunteers per ward
         var wardUsers = allUsers.Where(u => u.WardNumber > 0).GroupBy(u => u.WardNumber).ToDictionary(g => g.Key, g => g.ToList());
 
-        // 3. Aggregate General Donations per Ward
-        var donationsByWard = allDonations
+        // 4. Aggregate General Donations per Ward
+        var donationsByWard = donationsForRanking
             .Select(d => new
             {
                 Ward = d.WardNumber > 0 ? d.WardNumber : (userMap.TryGetValue(d.UserId, out var u) ? u.WardNumber : 0),
@@ -292,8 +375,8 @@ public class LeaderboardsController : ControllerBase
                 DonationTransactions = g.Count()
             });
 
-        // 4. Aggregate Sponsorships per Ward
-        var sponsorshipsByWard = allSponsorships
+        // 5. Aggregate Sponsorships per Ward
+        var sponsorshipsByWard = sponsorshipsForRanking
             .Select(s => new
             {
                 Ward = s.WardNumber > 0 ? s.WardNumber : (userMap.TryGetValue(s.CollectedByUserId, out var u) ? u.WardNumber : 0),
@@ -309,10 +392,12 @@ public class LeaderboardsController : ControllerBase
                 SponsorshipTransactions = g.Count()
             });
 
-        // 5. Build rank list for standard 12 wards (and any additional recorded wards)
-        var wardNumbers = Enumerable.Range(1, 12)
+        // 6. Build rank list for all wards (Wards 1 through 19 and any recorded wards)
+        var wardNumbers = allWards.Select(w => w.WardNumber)
             .Union(donationsByWard.Keys)
             .Union(sponsorshipsByWard.Keys)
+            .Union(wardUsers.Keys)
+            .Union(Enumerable.Range(1, 19))
             .Where(w => w > 0)
             .Distinct()
             .OrderBy(w => w)
@@ -344,21 +429,19 @@ public class LeaderboardsController : ControllerBase
             donationsByWard.TryGetValue(wardNum, out var donStat);
             sponsorshipsByWard.TryGetValue(wardNum, out var sponStat);
 
-            int totalKits = (donStat?.TotalKits ?? 0) + (sponStat?.TotalKits ?? 0);
+            // PURE RELIEF KITS COUNT: Derived strictly from Donations (1 Kit = 1 Relief Kit)
+            int totalKits = donStat?.TotalKits ?? 0;
             
-            // Count unique sponsors/donors (or fallback to transactions count)
-            int donSponsors = donStat != null ? Math.Max(donStat.UniqueDonors, donStat.DonationTransactions) : 0;
+            // STRICT SEPARATION:
+            // Donors = Individual relief kit contributors (from Donations)
+            // Sponsors = Organization/firm item sponsors (from Sponsorships)
+            int donDonors = donStat != null ? Math.Max(donStat.UniqueDonors, donStat.DonationTransactions) : 0;
             int sponSponsors = sponStat != null ? Math.Max(sponStat.UniqueSponsors, sponStat.SponsorshipTransactions) : 0;
-            int totalSponsors = donSponsors + sponSponsors;
 
             // Ward authentic name
             string englishName = wardMap.TryGetValue(wardNum, out var wEnt) && !string.IsNullOrWhiteSpace(wEnt.WardName) && !wEnt.WardName.StartsWith("Ward ")
                 ? wEnt.WardName
                 : (DefaultMadavoorWardNames.TryGetValue(wardNum, out var defEn) ? defEn : $"Ward {wardNum}");
-
-            string malayalamName = DefaultMadavoorWardMalayalamNames.TryGetValue(wardNum, out var defMl)
-                ? defMl
-                : englishName;
 
             double pct = targetKits > 0 ? Math.Round((double)totalKits / targetKits * 100, 1) : 0;
 
@@ -366,10 +449,11 @@ public class LeaderboardsController : ControllerBase
             {
                 WardNumber = wardNum,
                 WardName = englishName,
-                WardNameMalayalam = malayalamName,
+                WardNameMalayalam = string.Empty,
                 WardLeadName = leadName,
                 TotalKitsCollected = totalKits,
-                SponsorsCount = totalSponsors,
+                DonorsCount = donDonors,
+                SponsorsCount = sponSponsors,
                 VolunteerCount = volunteerCount,
                 TargetKits = targetKits,
                 AchievementPercentage = pct
@@ -388,12 +472,92 @@ public class LeaderboardsController : ControllerBase
             })
             .ToList();
 
+        // Compute Top 10 Volunteers as per ranking
+        var topVolunteersStats = donationsForRanking
+            .Where(d => !string.IsNullOrEmpty(d.UserId))
+            .GroupBy(d => d.UserId)
+            .Select(g => new
+            {
+                UserId = g.Key,
+                TotalKits = g.Sum(d => d.KitCount),
+                DonationsCount = g.Count(),
+                UniqueDonors = g.Select(d => d.DonorName?.Trim()).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().Count()
+            })
+            .OrderByDescending(v => v.TotalKits)
+            .Take(10)
+            .ToList();
+
+        var volunteerSponsorships = sponsorshipsForRanking
+            .Where(s => !string.IsNullOrEmpty(s.CollectedByUserId))
+            .GroupBy(s => s.CollectedByUserId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var rankedVolunteers = new List<PublicVolunteerRankDto>();
+        int volPos = 1;
+
+        foreach (var stat in topVolunteersStats)
+        {
+            userMap.TryGetValue(stat.UserId, out var user);
+            int vWardNum = user?.WardNumber ?? 0;
+            string vWardName = vWardNum > 0
+                ? (wardMap.TryGetValue(vWardNum, out var wEnt) && !string.IsNullOrWhiteSpace(wEnt.WardName) && !wEnt.WardName.StartsWith("Ward ")
+                    ? wEnt.WardName
+                    : (DefaultMadavoorWardNames.TryGetValue(vWardNum, out var defEn) ? defEn : $"Ward {vWardNum}"))
+                : "No Ward Assigned";
+
+            string vLeadName = "No Ward Lead";
+            if (vWardNum > 0 && wardUsers.TryGetValue(vWardNum, out var wardMembers))
+            {
+                var lead = wardMembers.FirstOrDefault(u => u.Role == "WardCommittee" || u.Role == "WardLead")
+                           ?? wardMembers.FirstOrDefault(u => u.Role == "Coordinator");
+                if (lead != null && !string.IsNullOrWhiteSpace(lead.FullName))
+                {
+                    vLeadName = lead.FullName;
+                }
+            }
+
+            int targetKits = user?.TargetKits ?? 0;
+            double pct = targetKits > 0 ? Math.Round((double)stat.TotalKits / targetKits * 100, 1) : 0;
+            int volDonors = Math.Max(stat.UniqueDonors, stat.DonationsCount);
+            int volSponsors = volunteerSponsorships.TryGetValue(stat.UserId, out int sc) ? sc : 0;
+
+            rankedVolunteers.Add(new PublicVolunteerRankDto
+            {
+                Position = volPos,
+                UserId = stat.UserId,
+                Name = user?.FullName ?? "Volunteer",
+                Role = user?.Role ?? "Volunteer",
+                WardNumber = vWardNum,
+                WardName = vWardName,
+                WardLeadName = vLeadName,
+                TotalKitsCollected = stat.TotalKits,
+                DonorsCount = volDonors,
+                SponsorsCount = volSponsors,
+                TargetKits = targetKits,
+                AchievementPercentage = pct,
+                RankBadge = AssignBadge(volPos)
+            });
+            volPos++;
+        }
+
+        var topperWard = rankedWards.FirstOrDefault(w => w.TotalKitsCollected > 0) ?? rankedWards.FirstOrDefault();
+        var topperVolunteer = rankedVolunteers.FirstOrDefault(v => v.TotalKitsCollected > 0) ?? rankedVolunteers.FirstOrDefault();
+
         return Ok(new PublicWardsLeaderboardResponse
         {
             TotalKitsCollected = rankedWards.Sum(w => w.TotalKitsCollected),
+            TotalDonors = rankedWards.Sum(w => w.DonorsCount),
             TotalSponsors = rankedWards.Sum(w => w.SponsorsCount),
             Wards = rankedWards,
-            GeneratedAt = DateTime.UtcNow
+            TopVolunteers = rankedVolunteers,
+            GeneratedAt = DateTime.UtcNow,
+            FilterPeriod = effectivePeriod,
+            FilterFromDate = filterFrom,
+            FilterToDate = filterTo,
+            IsFallbackToLastTransactionDate = isFallback,
+            LastActiveTransactionDate = lastActiveTransactionDate,
+            TopperWard = topperWard,
+            TopperVolunteer = topperVolunteer
         });
     }
 

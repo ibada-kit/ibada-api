@@ -10,7 +10,14 @@ public class TableStorageService<T> : ITableStorageService<T> where T : class, I
     public TableStorageService(TableServiceClient serviceClient, string tableName)
     {
         _tableClient = serviceClient.GetTableClient(tableName);
-        _tableClient.CreateIfNotExists();
+        try
+        {
+            _tableClient.CreateIfNotExists();
+        }
+        catch
+        {
+            // Fallback gracefully if account key only has table data read/write permissions
+        }
     }
 
     public async Task AddAsync(T entity)
