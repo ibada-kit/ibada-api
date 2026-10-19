@@ -411,6 +411,11 @@ namespace ML.Charity.API.Client.Controllers
             var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
+            if (request.IsActive.HasValue && !request.IsActive.Value && IsCurrentCaller(user))
+            {
+                return BadRequest("You cannot disable your own admin account.");
+            }
+
             string targetRole = !string.IsNullOrWhiteSpace(request.Role) ? request.Role : user.Role;
             int targetWard = request.WardNumber.HasValue ? request.WardNumber.Value : user.WardNumber;
             bool targetActive = request.IsActive.HasValue ? request.IsActive.Value : user.IsActive;
@@ -526,6 +531,11 @@ namespace ML.Charity.API.Client.Controllers
             var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
+            if (!request.IsActive && IsCurrentCaller(user))
+            {
+                return BadRequest("You cannot disable your own admin account.");
+            }
+
             if (request.IsActive && user.Role == "WardCommittee")
             {
                 var existingCoords = await _userRepository.QueryAsync(u =>
@@ -598,6 +608,11 @@ namespace ML.Charity.API.Client.Controllers
             var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
+            if (IsCurrentCaller(user))
+            {
+                return BadRequest("You cannot delete or deactivate your own admin account.");
+            }
+
             user.IsActive = false;
             await _userRepository.UpdateAsync(user);
 
@@ -636,6 +651,33 @@ namespace ML.Charity.API.Client.Controllers
                 ?? User.FindFirst("sub")?.Value
                 ?? User.FindFirst("UserId")?.Value
                 ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        }
+
+        private bool IsCurrentCaller(UserEntity user)
+        {
+            var callerId = GetCurrentUserId();
+            var callerPhone = User.FindFirst("PhoneNumber")?.Value
+                           ?? User.FindFirst(ClaimTypes.MobilePhone)?.Value;
+
+            if (!string.IsNullOrEmpty(callerId) && (user.UserId == callerId || user.PhoneNumber == callerId))
+                return true;
+
+            if (!string.IsNullOrEmpty(callerPhone))
+            {
+                var cleanCaller = new string(callerPhone.Where(char.IsDigit).ToArray());
+                var cleanUser = new string((user.PhoneNumber ?? string.Empty).Where(char.IsDigit).ToArray());
+                if (!string.IsNullOrEmpty(cleanCaller) && !string.IsNullOrEmpty(cleanUser))
+                {
+                    if (cleanCaller == cleanUser) return true;
+                    if (cleanCaller.Length >= 10 && cleanUser.Length >= 10 &&
+                        cleanCaller.Substring(cleanCaller.Length - 10) == cleanUser.Substring(cleanUser.Length - 10))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 }
