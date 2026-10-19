@@ -106,25 +106,41 @@ namespace ML.Charity.API.Client.Controllers
             {
                 if (request.Role == "Volunteer")
                 {
-                    if (string.IsNullOrEmpty(request.AssignedParentUserId))
-                        return BadRequest("Admin must specify an AssignedParentUserId (Coordinator or WardCommittee) when creating a Volunteer.");
+                    if (!string.IsNullOrEmpty(request.AssignedParentUserId))
+                    {
+                        // Verify the assigned parent exists and is eligible
+                        var parentData = await _userRepository.QueryAsync(u => u.UserId == request.AssignedParentUserId);
+                        var parent = parentData.FirstOrDefault();
+                        if (parent == null || (parent.Role != "Coordinator" && parent.Role != "WardCommittee"))
+                            return BadRequest("The assigned parent must be a Coordinator or WardCommittee.");
 
-                    // Verify the assigned parent exists and is eligible
-                    var parentData = await _userRepository.QueryAsync(u => u.UserId == request.AssignedParentUserId);
-                    var parent = parentData.FirstOrDefault();
-                    if (parent == null || (parent.Role != "Coordinator" && parent.Role != "WardCommittee"))
-                        return BadRequest("The assigned parent must be a Coordinator or WardCommittee.");
-
-                    newUser.ParentUserId = parent.UserId;
-                    newUser.WardNumber = parent.WardNumber; // Inherit ward from assigned parent
+                        newUser.ParentUserId = parent.UserId;
+                        newUser.WardNumber = request.WardNumber.HasValue && request.WardNumber.Value > 0
+                            ? request.WardNumber.Value
+                            : parent.WardNumber; // Inherit ward from assigned parent if not specified
+                    }
+                    else if (request.WardNumber.HasValue && request.WardNumber.Value > 0)
+                    {
+                        // Admin assigning volunteer directly to a ward
+                        newUser.WardNumber = request.WardNumber.Value;
+                        var wardCoordData = await _userRepository.QueryAsync(u => u.Role == "WardCommittee" && u.WardNumber == request.WardNumber.Value && u.IsActive);
+                        var wardCoord = wardCoordData.FirstOrDefault();
+                        newUser.ParentUserId = wardCoord != null ? wardCoord.UserId : (creatorId ?? string.Empty);
+                    }
+                    else
+                    {
+                        return BadRequest("Admin must specify an AssignedParentUserId (Coordinator or WardCommittee) or WardNumber when creating a Volunteer.");
+                    }
                 }
                 else if (request.Role == "WardCommittee")
                 {
-                    if (!request.WardNumber.HasValue) return BadRequest("WardNumber is required for WardCommittee.");
+                    if (!request.WardNumber.HasValue || request.WardNumber.Value <= 0) 
+                        return BadRequest("WardNumber is required for WardCommittee.");
 
-                    // Enforce rule: Each ward has only ONE Ward Coordinator
-                    var existingWardCoord = await _userRepository.QueryAsync(u => u.Role == "WardCommittee" && u.WardNumber == request.WardNumber);
-                    if (existingWardCoord.Any()) return Conflict($"Ward {request.WardNumber} already has a Ward Coordinator.");
+                    // Enforce rule: Each ward has only ONE active Ward Coordinator
+                    var existingWardCoord = await _userRepository.QueryAsync(u => u.Role == "WardCommittee" && u.WardNumber == request.WardNumber && u.IsActive);
+                    if (existingWardCoord.Any()) 
+                        return Conflict($"Ward {request.WardNumber} already has an active Ward Coordinator.");
 
                     newUser.ParentUserId = creatorId;
                     newUser.WardNumber = request.WardNumber.Value;
@@ -132,6 +148,7 @@ namespace ML.Charity.API.Client.Controllers
                 else if (request.Role == "Coordinator")
                 {
                     newUser.ParentUserId = creatorId;
+                    newUser.WardNumber = request.WardNumber ?? 0;
                 }
             }
             else if (creatorRole == "Coordinator")
@@ -170,6 +187,75 @@ namespace ML.Charity.API.Client.Controllers
                 return 0.0;
             }
             return d.TotalAmount;
+        }
+
+        [HttpGet]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetAllUsers(
+            [FromQuery] string? role = null,
+            [FromQuery] int? wardNumber = null,
+            [FromQuery] bool? isActive = null,
+            [FromQuery] string? search = null)
+        {
+            var allUsers = (await _userRepository.QueryAsync(u => true)).ToList();
+
+            if (!string.IsNullOrWhiteSpace(role) && !role.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                allUsers = allUsers.Where(u => string.Equals(u.Role, role, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            if (wardNumber.HasValue && wardNumber.Value > 0)
+            {
+                allUsers = allUsers.Where(u => u.WardNumber == wardNumber.Value).ToList();
+            }
+
+            if (isActive.HasValue)
+            {
+                allUsers = allUsers.Where(u => u.IsActive == isActive.Value).ToList();
+            }
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var s = search.Trim();
+                allUsers = allUsers.Where(u =>
+                    (!string.IsNullOrEmpty(u.FullName) && u.FullName.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrEmpty(u.PhoneNumber) && u.PhoneNumber.Contains(s, StringComparison.OrdinalIgnoreCase))
+                ).ToList();
+            }
+
+            var allDonations = _donationRepository != null
+                ? (await _donationRepository.QueryEntitiesAsync(null)) ?? (await _donationRepository.QueryAsync(d => true)) ?? new List<DonationEntity>()
+                : new List<DonationEntity>();
+
+            var donationsByUser = allDonations
+                .Where(d => !string.IsNullOrEmpty(d.UserId))
+                .GroupBy(d => d.UserId)
+                .ToDictionary(g => g.Key, g => new
+                {
+                    Kits = g.Sum(d => d.KitCount),
+                    Amount = g.Sum(GetEffectiveAmountPaid)
+                });
+
+            var responses = allUsers.Select(u =>
+            {
+                var resp = MapToResponse(u);
+                if (u.Role == "WardCommittee")
+                {
+                    var wardDons = allDonations.Where(d => d.WardNumber == u.WardNumber);
+                    resp.KitsCollected = wardDons.Sum(d => d.KitCount);
+                    resp.CollectedAmount = wardDons.Sum(GetEffectiveAmountPaid);
+                }
+                else if (donationsByUser.TryGetValue(u.UserId, out var stats))
+                {
+                    resp.KitsCollected = stats.Kits;
+                    resp.CollectedAmount = stats.Amount;
+                }
+                return resp;
+            }).OrderBy(u => u.Role == "Admin" ? 0 : u.Role == "WardCommittee" ? 1 : u.Role == "Coordinator" ? 2 : 3)
+              .ThenBy(u => u.WardNumber)
+              .ThenBy(u => u.FullName);
+
+            return Ok(responses);
         }
 
         [HttpGet("coordinators")]
@@ -325,6 +411,31 @@ namespace ML.Charity.API.Client.Controllers
             var user = await FindUserByIdOrPhoneAsync(userId);
             if (user == null) return NotFound("User not found.");
 
+            string targetRole = !string.IsNullOrWhiteSpace(request.Role) ? request.Role : user.Role;
+            int targetWard = request.WardNumber.HasValue ? request.WardNumber.Value : user.WardNumber;
+            bool targetActive = request.IsActive.HasValue ? request.IsActive.Value : user.IsActive;
+
+            // Enforce single active Ward Coordinator per ward
+            if (targetRole == "WardCommittee" && targetActive)
+            {
+                if (targetWard <= 0)
+                {
+                    return BadRequest("A valid WardNumber is required for WardCommittee.");
+                }
+
+                var existingCoords = await _userRepository.QueryAsync(u =>
+                    u.Role == "WardCommittee" &&
+                    u.WardNumber == targetWard &&
+                    u.IsActive &&
+                    u.UserId != user.UserId);
+
+                var existingCoord = existingCoords.FirstOrDefault();
+                if (existingCoord != null)
+                {
+                    return Conflict($"Ward {targetWard} already has an active Ward Coordinator ({existingCoord.FullName}).");
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(request.FullName))
                 user.FullName = request.FullName.Trim();
 
@@ -333,6 +444,9 @@ namespace ML.Charity.API.Client.Controllers
 
             if (request.WardNumber.HasValue)
                 user.WardNumber = request.WardNumber.Value;
+
+            if (request.AssignedParentUserId != null)
+                user.ParentUserId = request.AssignedParentUserId;
 
             if (!string.IsNullOrWhiteSpace(request.District))
                 user.District = request.District;
@@ -404,6 +518,39 @@ namespace ML.Charity.API.Client.Controllers
             });
         }
 
+        [HttpPatch("{userId}/status")]
+        [HttpPut("{userId}/status")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ToggleUserStatus(string userId, [FromBody] UpdateUserStatusRequest request)
+        {
+            var user = await FindUserByIdOrPhoneAsync(userId);
+            if (user == null) return NotFound("User not found.");
+
+            if (request.IsActive && user.Role == "WardCommittee")
+            {
+                var existingCoords = await _userRepository.QueryAsync(u =>
+                    u.Role == "WardCommittee" &&
+                    u.WardNumber == user.WardNumber &&
+                    u.IsActive &&
+                    u.UserId != user.UserId);
+
+                var existingCoord = existingCoords.FirstOrDefault();
+                if (existingCoord != null)
+                {
+                    return Conflict($"Cannot activate Ward Coordinator: Ward {user.WardNumber} already has an active Ward Coordinator ({existingCoord.FullName}).");
+                }
+            }
+
+            user.IsActive = request.IsActive;
+            await _userRepository.UpdateAsync(user);
+
+            return Ok(new
+            {
+                Message = $"User {user.FullName} is now {(user.IsActive ? "active" : "disabled")}.",
+                User = MapToResponse(user)
+            });
+        }
+
         [HttpPost("{userId}/reset-password")]
         [Authorize(Roles = "Admin,Coordinator,WardCommittee")]
         public async Task<IActionResult> ResetPassword(string userId, [FromBody] ResetPasswordRequest? request)
@@ -471,7 +618,8 @@ namespace ML.Charity.API.Client.Controllers
                 TargetKits = u.TargetKits,
                 Panchayath = u.Panchayath,
                 WardNumber = u.WardNumber,
-                ParentUserId = u.ParentUserId
+                ParentUserId = u.ParentUserId,
+                IsActive = u.IsActive
             };
         }
 

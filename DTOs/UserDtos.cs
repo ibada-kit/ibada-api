@@ -45,6 +45,7 @@ namespace ML.Charity.API.Client.DTOs
         public double TargetAmount { get; set; }
         public int KitsCollected { get; set; }
         public double CollectedAmount { get; set; }
+        public bool IsActive { get; set; } = true;
     }
 
     public class UpdateTargetRequest
@@ -65,6 +66,13 @@ namespace ML.Charity.API.Client.DTOs
         public int? TargetKits { get; set; }
         public string? NewPassword { get; set; }
         public bool? IsActive { get; set; }
+        public string? AssignedParentUserId { get; set; }
+    }
+
+    public class UpdateUserStatusRequest
+    {
+        [Required]
+        public bool IsActive { get; set; }
     }
 
     public class ResetPasswordRequest
