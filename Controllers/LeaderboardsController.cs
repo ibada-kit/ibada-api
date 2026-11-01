@@ -572,10 +572,6 @@ public class LeaderboardsController : ControllerBase
                         : (DefaultMadavoorWardNames.TryGetValue(dWardNum, out var defEn) ? defEn : $"Ward {dWardNum}"))
                     : "No Ward Assigned";
 
-                double totalAmt = d.TotalAmount > 0 ? d.TotalAmount : (effectivePaid + d.BalanceAmount);
-                double balAmt = d.BalanceAmount > 0 ? d.BalanceAmount : Math.Max(0, totalAmt - effectivePaid);
-                string status = balAmt <= 0 ? "Completed" : (effectivePaid > 0 ? "Partial" : d.PaymentStatus);
-
                 return new
                 {
                     DonorName = d.DonorName.Trim(),
@@ -583,9 +579,6 @@ public class LeaderboardsController : ControllerBase
                     WardName = dWardName,
                     d.KitCount,
                     AmountPaid = effectivePaid,
-                    TotalAmount = totalAmt,
-                    BalanceAmount = balAmt,
-                    PaymentStatus = status,
                     TransactionDate = (DateTime?)(d.TransactionDate != default ? d.TransactionDate : d.Timestamp?.UtcDateTime)
                 };
             })
@@ -602,10 +595,6 @@ public class LeaderboardsController : ControllerBase
                 WardName = x.WardName,
                 KitCount = x.KitCount,
                 AmountPaid = x.AmountPaid,
-                TotalAmount = x.TotalAmount,
-                BalanceAmount = x.BalanceAmount,
-                PaymentStatus = x.PaymentStatus,
-                TransactionDate = x.TransactionDate,
                 RankBadge = AssignBadge(idx + 1)
             })
             .ToList();
@@ -625,29 +614,18 @@ public class LeaderboardsController : ControllerBase
                         : (DefaultMadavoorWardNames.TryGetValue(sWardNum, out var defEn) ? defEn : $"Ward {sWardNum}"))
                     : "No Ward Assigned";
 
-                double totalAmt = s.TotalAmount > 0 ? s.TotalAmount : (effectivePaid + s.BalanceAmount);
-                double balAmt = s.BalanceAmount > 0 ? s.BalanceAmount : Math.Max(0, totalAmt - effectivePaid);
-                string status = balAmt <= 0 ? "Completed" : (effectivePaid > 0 ? "Partial" : s.PaymentStatus);
-                string item = !string.IsNullOrWhiteSpace(s.ItemName) ? s.ItemName : "Sponsorship";
-
                 return new
                 {
                     FirmName = s.DonorName.Trim(),
                     WardNumber = sWardNum,
                     WardName = sWardName,
-                    ItemName = item,
-                    Quantity = s.Quantity > 0 ? s.Quantity : 1,
                     AmountPaid = effectivePaid,
-                    TotalAmount = totalAmt,
-                    BalanceAmount = balAmt,
-                    PaymentStatus = status,
                     CreatedDate = (DateTime?)(s.CreatedDate != default ? s.CreatedDate : s.Timestamp?.UtcDateTime)
                 };
             })
             .Where(x => x.AmountPaid > 0)
             .OrderByDescending(x => x.AmountPaid)
             .ThenByDescending(x => x.CreatedDate)
-            .ThenByDescending(x => x.TotalAmount)
             .Take(10)
             .Select((x, idx) => new PublicSponsorFirmRankDto
             {
@@ -655,13 +633,7 @@ public class LeaderboardsController : ControllerBase
                 FirmName = x.FirmName,
                 WardNumber = x.WardNumber,
                 WardName = x.WardName,
-                ItemName = x.ItemName,
-                Quantity = x.Quantity,
                 AmountPaid = x.AmountPaid,
-                TotalAmount = x.TotalAmount,
-                BalanceAmount = x.BalanceAmount,
-                PaymentStatus = x.PaymentStatus,
-                CreatedDate = x.CreatedDate,
                 RankBadge = AssignBadge(idx + 1)
             })
             .ToList();

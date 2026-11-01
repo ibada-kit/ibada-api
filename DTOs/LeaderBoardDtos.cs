@@ -69,10 +69,6 @@ namespace ML.Charity.API.Client.DTOs
         public string WardName { get; set; } = string.Empty;
         public int KitCount { get; set; }
         public double AmountPaid { get; set; } // Effective collected amount
-        public double TotalAmount { get; set; }
-        public double BalanceAmount { get; set; }
-        public string PaymentStatus { get; set; } = string.Empty;
-        public DateTime? TransactionDate { get; set; }
         public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
     }
 
@@ -82,13 +78,7 @@ namespace ML.Charity.API.Client.DTOs
         public string FirmName { get; set; } = string.Empty;
         public int WardNumber { get; set; }
         public string WardName { get; set; } = string.Empty;
-        public string ItemName { get; set; } = string.Empty;
-        public int Quantity { get; set; }
         public double AmountPaid { get; set; } // Effective collected amount
-        public double TotalAmount { get; set; }
-        public double BalanceAmount { get; set; }
-        public string PaymentStatus { get; set; } = string.Empty;
-        public DateTime? CreatedDate { get; set; }
         public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
     }
 
