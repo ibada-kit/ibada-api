@@ -61,6 +61,37 @@ namespace ML.Charity.API.Client.DTOs
         public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
     }
 
+    public class PublicKitDonorRankDto
+    {
+        public int Position { get; set; }
+        public string DonorName { get; set; } = string.Empty;
+        public int WardNumber { get; set; }
+        public string WardName { get; set; } = string.Empty;
+        public int KitCount { get; set; }
+        public double AmountPaid { get; set; } // Effective collected amount
+        public double TotalAmount { get; set; }
+        public double BalanceAmount { get; set; }
+        public string PaymentStatus { get; set; } = string.Empty;
+        public DateTime? TransactionDate { get; set; }
+        public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
+    }
+
+    public class PublicSponsorFirmRankDto
+    {
+        public int Position { get; set; }
+        public string FirmName { get; set; } = string.Empty;
+        public int WardNumber { get; set; }
+        public string WardName { get; set; } = string.Empty;
+        public string ItemName { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+        public double AmountPaid { get; set; } // Effective collected amount
+        public double TotalAmount { get; set; }
+        public double BalanceAmount { get; set; }
+        public string PaymentStatus { get; set; } = string.Empty;
+        public DateTime? CreatedDate { get; set; }
+        public string RankBadge { get; set; } = string.Empty; // Gold, Silver, Bronze, Contributor
+    }
+
     public class PublicWardsLeaderboardResponse
     {
         public int TotalKitsCollected { get; set; }
@@ -68,6 +99,8 @@ namespace ML.Charity.API.Client.DTOs
         public int TotalSponsors { get; set; }
         public List<PublicWardRankDto> Wards { get; set; } = new();
         public List<PublicVolunteerRankDto> TopVolunteers { get; set; } = new();
+        public List<PublicKitDonorRankDto> TopKitDonors { get; set; } = new();
+        public List<PublicSponsorFirmRankDto> TopSponsorFirms { get; set; } = new();
         public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
 
         // Date-based topper metadata

@@ -65,6 +65,19 @@ public class LeaderboardsController : ControllerBase
         return d.TotalAmount;
     }
 
+    private static double GetEffectiveSponsorshipPaid(SponsorshipEntity s)
+    {
+        if (s.AmountPaid > 0 || s.BalanceAmount > 0)
+        {
+            return s.AmountPaid;
+        }
+        if (string.Equals(s.PaymentStatus, "Booked", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0.0;
+        }
+        return s.TotalAmount;
+    }
+
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetLeaderboard()
@@ -543,6 +556,116 @@ public class LeaderboardsController : ControllerBase
         var topperWard = rankedWards.FirstOrDefault(w => w.TotalKitsCollected > 0) ?? rankedWards.FirstOrDefault();
         var topperVolunteer = rankedVolunteers.FirstOrDefault(v => v.TotalKitsCollected > 0) ?? rankedVolunteers.FirstOrDefault();
 
+        // 7. Compute Top 10 Kit Purchases / Donors
+        // Condition: Top 10 purchases based on collected amount (AmountPaid).
+        // If a donor paid 500 and balance 500, consider 500 only.
+        // Top Contributors ALWAYS reflects All Time (allDonations / allSponsorships)
+        var rankedKitPurchases = allDonations
+            .Where(d => !string.IsNullOrWhiteSpace(d.DonorName))
+            .Select(d =>
+            {
+                double effectivePaid = GetEffectiveAmountPaid(d);
+                int dWardNum = d.WardNumber > 0 ? d.WardNumber : (userMap.TryGetValue(d.UserId, out var u) ? u.WardNumber : 0);
+                string dWardName = dWardNum > 0
+                    ? (wardMap.TryGetValue(dWardNum, out var wEnt) && !string.IsNullOrWhiteSpace(wEnt.WardName) && !wEnt.WardName.StartsWith("Ward ")
+                        ? wEnt.WardName
+                        : (DefaultMadavoorWardNames.TryGetValue(dWardNum, out var defEn) ? defEn : $"Ward {dWardNum}"))
+                    : "No Ward Assigned";
+
+                double totalAmt = d.TotalAmount > 0 ? d.TotalAmount : (effectivePaid + d.BalanceAmount);
+                double balAmt = d.BalanceAmount > 0 ? d.BalanceAmount : Math.Max(0, totalAmt - effectivePaid);
+                string status = balAmt <= 0 ? "Completed" : (effectivePaid > 0 ? "Partial" : d.PaymentStatus);
+
+                return new
+                {
+                    DonorName = d.DonorName.Trim(),
+                    WardNumber = dWardNum,
+                    WardName = dWardName,
+                    d.KitCount,
+                    AmountPaid = effectivePaid,
+                    TotalAmount = totalAmt,
+                    BalanceAmount = balAmt,
+                    PaymentStatus = status,
+                    TransactionDate = (DateTime?)(d.TransactionDate != default ? d.TransactionDate : d.Timestamp?.UtcDateTime)
+                };
+            })
+            .Where(x => x.AmountPaid > 0)
+            .OrderByDescending(x => x.AmountPaid)
+            .ThenByDescending(x => x.TransactionDate)
+            .ThenByDescending(x => x.KitCount)
+            .Take(10)
+            .Select((x, idx) => new PublicKitDonorRankDto
+            {
+                Position = idx + 1,
+                DonorName = x.DonorName,
+                WardNumber = x.WardNumber,
+                WardName = x.WardName,
+                KitCount = x.KitCount,
+                AmountPaid = x.AmountPaid,
+                TotalAmount = x.TotalAmount,
+                BalanceAmount = x.BalanceAmount,
+                PaymentStatus = x.PaymentStatus,
+                TransactionDate = x.TransactionDate,
+                RankBadge = AssignBadge(idx + 1)
+            })
+            .ToList();
+
+        // 8. Compute Top 10 Sponsor Firms
+        // Condition: Top 10 sponsored firms based on collected amount (AmountPaid).
+        // If a sponsor paid partial, consider collected amount only.
+        var rankedSponsorFirms = allSponsorships
+            .Where(s => !string.IsNullOrWhiteSpace(s.DonorName))
+            .Select(s =>
+            {
+                double effectivePaid = GetEffectiveSponsorshipPaid(s);
+                int sWardNum = s.WardNumber > 0 ? s.WardNumber : (userMap.TryGetValue(s.CollectedByUserId, out var u) ? u.WardNumber : 0);
+                string sWardName = sWardNum > 0
+                    ? (wardMap.TryGetValue(sWardNum, out var wEnt) && !string.IsNullOrWhiteSpace(wEnt.WardName) && !wEnt.WardName.StartsWith("Ward ")
+                        ? wEnt.WardName
+                        : (DefaultMadavoorWardNames.TryGetValue(sWardNum, out var defEn) ? defEn : $"Ward {sWardNum}"))
+                    : "No Ward Assigned";
+
+                double totalAmt = s.TotalAmount > 0 ? s.TotalAmount : (effectivePaid + s.BalanceAmount);
+                double balAmt = s.BalanceAmount > 0 ? s.BalanceAmount : Math.Max(0, totalAmt - effectivePaid);
+                string status = balAmt <= 0 ? "Completed" : (effectivePaid > 0 ? "Partial" : s.PaymentStatus);
+                string item = !string.IsNullOrWhiteSpace(s.ItemName) ? s.ItemName : "Sponsorship";
+
+                return new
+                {
+                    FirmName = s.DonorName.Trim(),
+                    WardNumber = sWardNum,
+                    WardName = sWardName,
+                    ItemName = item,
+                    Quantity = s.Quantity > 0 ? s.Quantity : 1,
+                    AmountPaid = effectivePaid,
+                    TotalAmount = totalAmt,
+                    BalanceAmount = balAmt,
+                    PaymentStatus = status,
+                    CreatedDate = (DateTime?)(s.CreatedDate != default ? s.CreatedDate : s.Timestamp?.UtcDateTime)
+                };
+            })
+            .Where(x => x.AmountPaid > 0)
+            .OrderByDescending(x => x.AmountPaid)
+            .ThenByDescending(x => x.CreatedDate)
+            .ThenByDescending(x => x.TotalAmount)
+            .Take(10)
+            .Select((x, idx) => new PublicSponsorFirmRankDto
+            {
+                Position = idx + 1,
+                FirmName = x.FirmName,
+                WardNumber = x.WardNumber,
+                WardName = x.WardName,
+                ItemName = x.ItemName,
+                Quantity = x.Quantity,
+                AmountPaid = x.AmountPaid,
+                TotalAmount = x.TotalAmount,
+                BalanceAmount = x.BalanceAmount,
+                PaymentStatus = x.PaymentStatus,
+                CreatedDate = x.CreatedDate,
+                RankBadge = AssignBadge(idx + 1)
+            })
+            .ToList();
+
         return Ok(new PublicWardsLeaderboardResponse
         {
             TotalKitsCollected = rankedWards.Sum(w => w.TotalKitsCollected),
@@ -550,6 +673,8 @@ public class LeaderboardsController : ControllerBase
             TotalSponsors = rankedWards.Sum(w => w.SponsorsCount),
             Wards = rankedWards,
             TopVolunteers = rankedVolunteers,
+            TopKitDonors = rankedKitPurchases,
+            TopSponsorFirms = rankedSponsorFirms,
             GeneratedAt = DateTime.UtcNow,
             FilterPeriod = effectivePeriod,
             FilterFromDate = filterFrom,
