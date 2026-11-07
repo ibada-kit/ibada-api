@@ -17,6 +17,7 @@ namespace ML.Charity.API.Client.Controllers
         private readonly ITableStorageService<UserEntity>? _userRepository;
         private readonly IWhatsAppService _whatsappService;
         private readonly ITableStorageService<CampaignSettingsEntity>? _settingsRepository;
+        private readonly IConfiguration? _configuration;
 
         // Fallback default cost of one kit (1 Kit = 1000 INR)
         private const double PRICE_PER_KIT = 1000.0;
@@ -111,12 +112,14 @@ namespace ML.Charity.API.Client.Controllers
             ITableStorageService<DonationEntity> donationRepository,
             ITableStorageService<UserEntity>? userRepository,
             IWhatsAppService whatsappService,
-            ITableStorageService<CampaignSettingsEntity>? settingsRepository = null)
+            ITableStorageService<CampaignSettingsEntity>? settingsRepository = null,
+            IConfiguration? configuration = null)
         {
             _donationRepository = donationRepository;
             _userRepository = userRepository;
             _whatsappService = whatsappService;
             _settingsRepository = settingsRepository;
+            _configuration = configuration;
         }
 
         private async Task<double> GetCurrentKitPriceAsync()
@@ -130,6 +133,32 @@ namespace ML.Charity.API.Client.Controllers
                 }
             }
             return PRICE_PER_KIT;
+        }
+
+        private async Task<bool> GetIsWardKitCollectionBlockedAsync()
+        {
+            if (_settingsRepository != null)
+            {
+                try
+                {
+                    var setting = await _settingsRepository.GetEntityAsync("GLOBAL", "KitPrice");
+                    if (setting != null)
+                    {
+                        return setting.BlockWardKitCollection;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[WARNING] Failed to fetch BlockWardKitCollection from Azure Table: {ex.Message}");
+                }
+            }
+
+            if (_configuration != null)
+            {
+                return _configuration.GetValue<bool>("CampaignSettings:BlockWardKitCollection", false);
+            }
+
+            return false;
         }
 
         [HttpGet]
@@ -510,19 +539,49 @@ namespace ML.Charity.API.Client.Controllers
             }
 
             int wardNumber = 0;
+            string userRole = User.FindFirst(ClaimTypes.Role)?.Value
+                           ?? User.FindFirst("role")?.Value
+                           ?? string.Empty;
+
             if (_userRepository != null)
             {
                 var users = await _userRepository.QueryAsync(u => u.UserId == userId || u.RowKey == userId);
                 var currentUser = users.FirstOrDefault();
-                if (currentUser != null && currentUser.WardNumber > 0)
+                if (currentUser != null)
                 {
-                    wardNumber = currentUser.WardNumber;
+                    if (currentUser.WardNumber > 0)
+                    {
+                        wardNumber = currentUser.WardNumber;
+                    }
+                    if (!string.IsNullOrEmpty(currentUser.Role))
+                    {
+                        userRole = currentUser.Role;
+                    }
                 }
             }
 
             if (wardNumber == 0 && !string.IsNullOrEmpty(wardString) && int.TryParse(wardString, out int parsedWard))
             {
                 wardNumber = parsedWard;
+            }
+
+            // --- WARD KIT COLLECTION BLOCK GUARD ---
+            // Only blocks WardCommittee (Ward Lead) and Ward Volunteers (WardNumber > 0).
+            // Drive Coordinators, Drive Volunteers (WardNumber == 0), and Admins remain unblocked.
+            bool isWardUser = string.Equals(userRole, "WardCommittee", StringComparison.OrdinalIgnoreCase)
+                           || (string.Equals(userRole, "Volunteer", StringComparison.OrdinalIgnoreCase) && wardNumber > 0);
+
+            if (isWardUser)
+            {
+                bool isBlocked = await GetIsWardKitCollectionBlockedAsync();
+                if (isBlocked)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Kit collection for ward teams is now closed as targets have been achieved. Please collect Sponsorships only.",
+                        isBlocked = true
+                    });
+                }
             }
 
             // Calculate exact amount securely on the server using dynamic kit price from Azure Table Storage

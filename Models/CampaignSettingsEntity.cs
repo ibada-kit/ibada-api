@@ -17,6 +17,7 @@ namespace ML.Charity.API.Client.Models
         public ETag ETag { get; set; }
 
         public double KitPrice { get; set; } = 1000.0;
+        public bool BlockWardKitCollection { get; set; } = false;
         public DateTimeOffset ModifiedDate { get; set; } = DateTimeOffset.UtcNow;
         public string ModifiedBy { get; set; } = "System";
 
