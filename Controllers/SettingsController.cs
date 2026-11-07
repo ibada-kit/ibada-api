@@ -20,14 +20,28 @@ namespace ML.Charity.API.Client.Controllers
         public const double DEFAULT_KIT_PRICE = 1000.0;
 
         private readonly ITableStorageService<CampaignSettingsEntity> _settingsRepository;
-        private readonly IConfiguration _configuration;
+        private readonly IConfiguration? _configuration;
 
         public SettingsController(
             ITableStorageService<CampaignSettingsEntity> settingsRepository,
-            IConfiguration configuration)
+            IConfiguration? configuration = null)
         {
             _settingsRepository = settingsRepository;
             _configuration = configuration;
+        }
+
+        private bool GetConfigDefaultBlocked()
+        {
+            if (_configuration != null)
+            {
+                var val = _configuration["CampaignSettings:BlockWardKitCollection"]
+                       ?? _configuration["BlockWardKitCollection"];
+                if (bool.TryParse(val, out var b))
+                {
+                    return b;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -38,7 +52,7 @@ namespace ML.Charity.API.Client.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> GetKitPrice()
         {
-            var configDefaultBlocked = _configuration.GetValue<bool>("CampaignSettings:BlockWardKitCollection", false);
+            var configDefaultBlocked = GetConfigDefaultBlocked();
             var setting = await _settingsRepository.GetEntityAsync(SETTINGS_PARTITION, KIT_PRICE_ROW);
             if (setting == null)
             {

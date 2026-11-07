@@ -155,7 +155,12 @@ namespace ML.Charity.API.Client.Controllers
 
             if (_configuration != null)
             {
-                return _configuration.GetValue<bool>("CampaignSettings:BlockWardKitCollection", false);
+                var val = _configuration["CampaignSettings:BlockWardKitCollection"]
+                       ?? _configuration["BlockWardKitCollection"];
+                if (bool.TryParse(val, out var blocked))
+                {
+                    return blocked;
+                }
             }
 
             return false;
